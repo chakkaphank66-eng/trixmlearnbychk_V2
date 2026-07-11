@@ -44,7 +44,11 @@ keys_to_init = {
     # --- ตัวแปรสำหรับ Custom Prompt Summary (ใหม่) ---
     'use_custom_summary_prompt': False,
     'custom_summary_prompt_1': "",
-    'custom_summary_prompt_2': ""
+    'custom_summary_prompt_2': "",
+    
+    # --- ตัวแปรสำหรับระบบบีบอัดไฟล์ PDF (ใหม่) ---
+    'show_download_modal': False,
+    'base_pdf_doc_bytes': None
 }
 
 for k, v in keys_to_init.items():
@@ -645,10 +649,12 @@ if st.session_state.pdf_bytes:
     else:
         st.info(f"⏳ หน้าที่ {curr+1} ยังไม่ได้ประมวลผล (อยู่ในคิว)...")
 
-    # --- 9. ปุ่มดาวน์โหลด PDF ---
+    # --- 9. ปุ่มดาวน์โหลด PDF (ปรับปรุงใหม่ เพิ่มระบบบีบอัดไฟล์) ---
     st.write("---")
     if len(st.session_state.processed_data) > 0:
-        if st.button("📦 รวบรวมและดาวน์โหลด PDF (ฉบับอัปเดตแก้ไขล่าสุด)"):
+        
+        # 9.1 ปุ่มเริ่มกระบวนการประกอบร่าง PDF
+        if st.button("📦 รวบรวมและเตรียมดาวน์โหลด PDF (พร้อมบีบอัดไฟล์)"):
             with st.spinner("กำลังประกอบร่างไฟล์ PDF ฉบับสมบูรณ์ พร้อมสรุป 2 แผ่น (รอสักครู่นะครับ)..."):
                 doc_out = fitz.open()
                 arch = fitz.Archive(".")
@@ -752,8 +758,67 @@ if st.session_state.pdf_bytes:
                     css_os_2 = f"@font-face {{ font-family: 'T'; src: url('THSarabunNew.ttf'); }} @font-face {{ font-family: 'T'; font-weight: bold; src: url('THSarabunNew Bold.ttf'); }} body {{ font-family: 'T'; font-size: {f_size_os_2}px; color: #334155; }} h2 {{ text-align: center; border-bottom: 2px solid #14B8A6; color: #0F172A; padding-bottom: 5px;}} table {{ width: 100%; border-collapse: collapse; margin: 10px 0;}} th, td {{ border: 1px solid #E2E8F0; padding: 6px; }} th {{ background-color: #F0FDFA; color: #0F766E; font-weight: bold; text-align: center; }}"
                     p_os_2.insert_htmlbox(fitz.Rect(40,40,555,802), f"<style>{css_os_2}</style><body><h2>⭐ CLINICAL ONE-SHEET (DISEASE FOCUS) ⭐</h2>{os_html_2}</body>", archive=arch)
 
-                pdf_res = doc_out.tobytes()
-                st.download_button("💾 ดาวน์โหลดไฟล์สมบูรณ์ (พร้อมสรุป 2 แผ่น)", data=pdf_res, file_name=f"Note_{st.session_state.pdf_name}", mime="application/pdf")
+                # เก็บร่าง PDF ไว้ในหน่วยความจำชั่วคราว เพื่อนำไปคำนวณการบีบอัด
+                st.session_state.base_pdf_doc_bytes = doc_out.tobytes()
+                st.session_state.show_download_modal = True
+
+        # 9.2 หน้าต่าง (Modal) ให้เลือกการบีบอัดและดาวน์โหลด
+        if st.session_state.get('show_download_modal') and st.session_state.get('base_pdf_doc_bytes'):
+            st.markdown("""
+            <div style="border: 2px solid #3182CE; border-radius: 12px; padding: 25px; background-color: #F8FAFC; margin-top: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                <h3 style="color: #2B6CB0; margin-top: 0; font-weight: 800;">🗜️ ตั้งค่าการบีบอัดไฟล์ PDF</h3>
+                <p style="color: #475569; font-size: 16px;">ไฟล์ก่อนบีบอัดอาจมีขนาดใหญ่ กรุณาเลือกระดับการลดขนาดเพื่อให้พอดีกับพื้นที่ iPad ของคุณครับ</p>
+            """, unsafe_allow_html=True)
+            
+            raw_bytes = st.session_state.base_pdf_doc_bytes
+            temp_doc = fitz.open(stream=raw_bytes, filetype="pdf")
+            orig_size_mb = len(raw_bytes) / (1024 * 1024)
+            
+            st.markdown(f"📁 ขนาดต้นฉบับก่อนบีบอัด: **{orig_size_mb:.2f} MB**")
+            
+            # ให้ผู้ใช้เลือกระดับการบีบอัด
+            comp_choice = st.radio(
+                "เลือกระดับการบีบอัด:",
+                options=[
+                    "2. บีบอัดที่แนะนำ (สมดุลที่สุด - แนะนำอันนี้ครับ)", 
+                    "1. บีบอัดขั้นสุด (เล็กที่สุด แต่อาจใช้เวลาโหลดเปิดไฟล์เพิ่มนิดหน่อย)", 
+                    "3. บีบอัดนิดหน่อย (ไฟล์ใหญ่อยู่ แต่รักษาคุณภาพภาพเดิมไว้เยอะสุด)"
+                ],
+                index=0
+            )
+            
+            # บีบอัดสดๆ ตามตัวเลือกเพื่อโชว์ขนาดไฟล์ทันที
+            with st.spinner("กำลังคำนวณขนาดไฟล์หลังบีบอัด..."):
+                if "ขั้นสุด" in comp_choice:
+                    # garbage=4 (clean up unused objects, check stream lengths), clean=True, deflate=True
+                    final_bytes = temp_doc.tobytes(garbage=4, deflate=True, clean=True)
+                elif "แนะนำ" in comp_choice:
+                    # garbage=3 (clean up unused objects), deflate=True
+                    final_bytes = temp_doc.tobytes(garbage=3, deflate=True)
+                else:
+                    # garbage=1 (remove unreferenced objects), deflate=True
+                    final_bytes = temp_doc.tobytes(garbage=1, deflate=True)
+                    
+                final_size_mb = len(final_bytes) / (1024 * 1024)
+                saved_mb = orig_size_mb - final_size_mb
+
+            # แสดงผลลัพธ์แบบเน้นตัวหนาเพื่อให้สะดุดตา
+            st.markdown(f"📉 หลังบีบอัดไฟล์จะเหลือขนาด: <strong style='color: #E53E3E; font-size: 1.4em;'>{final_size_mb:.2f} MB</strong> (ประหยัดพื้นที่ไปได้ **{saved_mb:.2f} MB**)", unsafe_allow_html=True)
+            
+            # ปุ่มดาวน์โหลดของจริง
+            st.download_button(
+                label=f"💾 คลิกดาวน์โหลดไฟล์ PDF ลงเครื่อง ({final_size_mb:.2f} MB)",
+                data=final_bytes,
+                file_name=f"Note_{st.session_state.pdf_name}",
+                mime="application/pdf",
+                type="primary"
+            )
+            
+            if st.button("❌ ปิดหน้าต่างนี้"):
+                st.session_state.show_download_modal = False
+                st.rerun()
+                
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # --- 10. ระบบประมวลผลหลังบ้าน (2-Phase Background Processor) ---
     if st.session_state.is_running and not st.session_state.stop_clicked:
