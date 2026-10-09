@@ -13,7 +13,7 @@ import pickle
 
 # --- 1. การตั้งค่าเริ่มต้น และ Session State ---
 keys_to_init = {
-    'processed_data': {}, # เก็บ {'ai_text', 'user_text', 'info_summary', 'img', 'extracted_images', 'raw_text'}
+    'processed_data': {}, 
     'page_idx': 0,
     'is_running': False,
     'stop_clicked': False,
@@ -31,19 +31,13 @@ keys_to_init = {
     'estimated_tokens_used': 0,
     'status_mode': 'blue',
     'user_api_key': "",
-    
-    # Context & Triage
     'phase': 'idle', 
     'global_data': {}, 
-    
-    # Custom Prompts
     'use_custom_prompt': False,
     'custom_prompt_text': "",
     'use_custom_summary_prompt': False,
     'custom_summary_prompt_1': "",
     'custom_summary_prompt_2': "",
-    
-    # PDF compression
     'show_download_modal': False,
     'base_pdf_doc_bytes': None
 }
@@ -63,7 +57,6 @@ st.markdown("""
     .stApp { background-color: #F8FAFC; }
     .main-header { font-size: 2.2rem; font-weight: 800; color: #0F172A; margin-bottom: 1rem; letter-spacing: -0.5px; }
     .stButton>button { border-radius: 8px; transition: all 0.3s; font-weight: 600; }
-    .stButton>button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
     
     .edit-box { 
         border: 1px solid #F1F5F9; border-radius: 16px; padding: 24px; 
@@ -82,13 +75,6 @@ st.markdown("""
     .box-quiz { background-color: #F0F9FF; border-left: 4px solid #0EA5E9; padding: 4px 12px; margin: 10px 0 4px 0; border-radius: 0 4px 4px 0; }
     .box-ans { background-color: #F0FDF4; border-left: 4px solid #22C55E; padding: 4px 12px; margin: 10px 0 4px 0; border-radius: 0 4px 4px 0; }
     
-    .box-hy strong, .box-hy b { font-weight: 700; }
-    .edit-box ul, .edit-box ol { margin-top: 0.5rem; margin-bottom: 1rem; padding-left: 1.5rem; }
-    .edit-box li, .edit-box p { margin-bottom: 12px; }
-    .edit-box table { width: 100%; border-collapse: collapse; margin: 20px 0; border-radius: 8px; overflow: hidden; font-size: 16px; }
-    .edit-box th { background-color: #F8FAFC; padding: 12px; border-bottom: 2px solid #E2E8F0; color: #475569; text-align: left; }
-    .edit-box td { padding: 12px; border-bottom: 1px solid #F1F5F9; }
-    
     .status-blue { background: #EBF8FF; border-left: 5px solid #3182CE; color: #2B6CB0; padding: 15px; border-radius: 10px; margin-bottom: 15px;}
     .status-yellow { background: #FFFFF0; border-left: 5px solid #D69E2E; color: #B7791F; padding: 15px; border-radius: 10px; margin-bottom: 15px;}
     .status-red { background: #FFF5F5; border-left: 5px solid #E53E3E; color: #C53030; padding: 15px; border-radius: 10px; margin-bottom: 15px;}
@@ -97,19 +83,39 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 3. ฟังก์ชันอัจฉริยะ (Helper Functions) ---
+
+# 🔥 อัปเกรดฟังก์ชันสกัดรูปภาพ: เตะขยะพื้นหลังและแบนเนอร์ทิ้ง
 def extract_images_from_page(doc, page_num):
     page = doc[page_num]
     image_list = page.get_images(full=True)
     extracted_images = []
+    
     for img_index, img in enumerate(image_list):
         xref = img[0]
         try:
             base_image = doc.extract_image(xref)
             image_bytes = base_image["image"]
             im = Image.open(io.BytesIO(image_bytes))
-            if im.width >= 100 and im.height >= 100: # กรองจุดหรือเส้นเล็กๆ ทิ้ง
-                extracted_images.append(image_bytes)
+            w, h = im.width, im.height
+            
+            # 1. กรองจุดหรือรูปจิ๋วทิ้ง
+            if w < 100 or h < 100: 
+                continue
+                
+            # 2. กรอง Aspect Ratio ที่ประหลาด (เช่น เส้นแบนเนอร์ หรือ ขอบสี)
+            ratio = w / h
+            if ratio > 6.0 or ratio < 0.15:
+                continue
+                
+            # 3. กรองกล่องสีพื้นล้วน (Solid Color Blocks) เช่น พื้นหลังสีเนื้อ/สีขาว
+            # แปลงเป็นภาพขาวดำ แล้วหาค่า Min-Max พิกเซล ถ้าห่างกันน้อยมากแปลว่าเป็นสีทึบสีเดียว
+            extrema = im.convert("L").getextrema()
+            if extrema and abs(extrema[1] - extrema[0]) < 15:
+                continue
+
+            extracted_images.append(image_bytes)
         except: pass
+        
     return extracted_images
 
 def distribute_content(text, layout_prefs):
@@ -201,30 +207,19 @@ def apply_custom_tags(text):
     
     replacements = [
         ("Intro:", "<div class='box-intro'><b style='color: #475569; font-size: 0.95em;'>🔗 เชื่อมโยงเนื้อหา (Intro)</b></div>"),
-        ("<strong>Intro:</strong>", "<div class='box-intro'><b style='color: #475569; font-size: 0.95em;'>🔗 เชื่อมโยงเนื้อหา (Intro)</b></div>"),
         ("Concept หลัก:", "<div class='box-concept'><b style='color: #4338CA; font-size: 0.95em;'>🎯 Concept หลัก</b></div>"),
-        ("<strong>Concept หลัก:</strong>", "<div class='box-concept'><b style='color: #4338CA; font-size: 0.95em;'>🎯 Concept หลัก</b></div>"),
         ("กลไกและเหตุผล:", "<div class='box-mech'><b style='color: #334155; font-size: 0.95em;'>⚙️ กลไกและเหตุผล</b></div>"),
-        ("<strong>กลไกและเหตุผล:</strong>", "<div class='box-mech'><b style='color: #334155; font-size: 0.95em;'>⚙️ กลไกและเหตุผล</b></div>"),
         ("ตัวอย่าง:", "<div class='box-clinic'><b style='color: #0F766E; font-size: 0.95em;'>💡 ตัวอย่าง</b></div>"),
-        ("<strong>ตัวอย่าง:</strong>", "<div class='box-clinic'><b style='color: #0F766E; font-size: 0.95em;'>💡 ตัวอย่าง</b></div>"),
         ("การนำไปใช้ในคลินิก:", "<div class='box-clinic'><b style='color: #0F766E; font-size: 0.95em;'>🩺 การนำไปใช้ในคลินิก</b></div>"),
-        ("<strong>การนำไปใช้ในคลินิก:</strong>", "<div class='box-clinic'><b style='color: #0F766E; font-size: 0.95em;'>🩺 การนำไปใช้ในคลินิก</b></div>"),
         ("ระวัง:", "<div class='box-warn'><b style='color: #C2410C; font-size: 0.95em;'>⚠️ ระวัง / จุดล้าสมัย</b></div>"),
-        ("<strong>ระวัง:</strong>", "<div class='box-warn'><b style='color: #C2410C; font-size: 0.95em;'>⚠️ ระวัง / จุดล้าสมัย</b></div>"),
         ("ข้ามได้เพราะ:", "<div class='box-warn'><b style='color: #C2410C; font-size: 0.95em;'>⏩ ข้ามได้เพราะ</b></div>"),
-        ("<strong>ข้ามได้เพราะ:</strong>", "<div class='box-warn'><b style='color: #C2410C; font-size: 0.95em;'>⏩ ข้ามได้เพราะ</b></div>"),
         ("Trick:", "<div class='box-trick'><b style='color: #A16207; font-size: 0.95em;'>💡 Trick & Cross-ref</b></div>"),
-        ("<strong>Trick:</strong>", "<div class='box-trick'><b style='color: #A16207; font-size: 0.95em;'>💡 Trick & Cross-ref</b></div>"),
         ("High-Yield:", "<div class='box-hy'><b style='color: #BE123C; font-size: 0.95em;'>🚨 High-Yield</b></div>"),
-        ("<strong>High-Yield:</strong>", "<div class='box-hy'><b style='color: #BE123C; font-size: 0.95em;'>🚨 High-Yield</b></div>"),
         ("Quiz:", "<div class='box-quiz'><b style='color: #0369A1; font-size: 0.95em;'>📝 Quiz</b></div>"),
-        ("<strong>Quiz:</strong>", "<div class='box-quiz'><b style='color: #0369A1; font-size: 0.95em;'>📝 Quiz</b></div>"),
         ("เฉลย:", "<div class='box-ans'><b style='color: #15803D; font-size: 0.95em;'>🎯 เฉลย</b></div>"),
-        ("<strong>เฉลย:</strong>", "<div class='box-ans'><b style='color: #15803D; font-size: 0.95em;'>🎯 เฉลย</b></div>"),
     ]
     for old, new in replacements:
-        html = html.replace(old, new).replace(f"<p>{new}</p>", new) 
+        html = html.replace(old, new).replace(f"<p>{new}</p>", new).replace(f"<strong>{old}</strong>", new)
     return html
 
 # --- 4. Sidebar: Note Settings ---
@@ -262,7 +257,7 @@ with st.sidebar:
         except: 
             st.error("API Key ไม่ถูกต้อง")
 
-    st.markdown("### 💳 Token Tracker (จำลอง)")
+    st.markdown("### 💳 Token Tracker")
     token_used = st.session_state.estimated_tokens_used
     st.progress(min(token_used / 1000000, 1.0)) 
     st.caption(f"ใช้ไปแล้ว: **{token_used:,} Tokens**")
@@ -280,7 +275,7 @@ with st.sidebar:
     pos_intro = st.selectbox("วาง [Intro & Concept] ไว้ที่:", pos_options, index=0, disabled=is_locked)
     pos_mech = st.selectbox("วาง [กลไก, ตัวอย่าง, คลินิก] ไว้ที่:", pos_options, index=0, disabled=is_locked)
     pos_warn = st.selectbox("วาง [ระวัง / ข้ามได้เพราะ] ไว้ที่:", pos_options, index=0, disabled=is_locked)
-    pos_hy = st.selectbox("วาง [High-Yield & Trick] ไว้ที่:", pos_options, index=1, disabled=is_locked) 
+    pos_hy = st.selectbox("วาง [High-Yield] ไว้ที่:", pos_options, index=1, disabled=is_locked) 
     pos_quiz = st.selectbox("วาง [Quiz & เฉลย] ไว้ที่:", pos_options, index=0, disabled=is_locked)
     
     st.markdown("### 📋 ข้อมูลที่ต้องการ (เปิด/ปิด ตามใจชอบ)")
@@ -312,7 +307,7 @@ with st.sidebar:
 **บริบทเนื้อหาความเชื่อมโยงของสไลด์ (+/- 10 หน้า):**
 {{global_context}}
 
-**ข้อความ Text ดิบจากหน้าปัจจุบัน (เพื่อกันข้อมูลปริมาณ/ยา/ตารางตกหล่น):**
+**ข้อความ Text ดิบจากหน้าปัจจุบัน (เพื่อกันข้อมูลตกหล่น):**
 ---
 {{raw_text}}
 ---
@@ -321,17 +316,17 @@ with st.sidebar:
 1. **ห้ามใช้คำทักทายเด็ดขาด** ให้เริ่มอธิบายเนื้อหาทันที เขียนชิดขอบซ้าย
 2. **ต้องเน้นตัวหนาที่คำสำคัญ** เพื่อลดภาระสายตา
 3. การอธิบายกลไก/อาการ/เหตุการณ์ **ต้องมีการให้เหตุผลโดยใช้คำว่า '...เพราะ...' เสมอ** ให้ผู้เรียนวาดภาพในหัวตามได้
-4. หากพบข้อมูลในสไลด์ที่ล้าสมัย (Outdated) หรือผิดพลาดเมื่อเทียบกับ Guideline ปัจจุบัน ให้ทักท้วงในหัวข้อ 'ระวัง:' เสมอ
-5. ⚠️ **กฎพิเศษสำหรับข้อสอบ:** ถ้าเนื้อหาในหน้านั้นเป็น "ข้อสอบ/คำถาม/โจทย์" ให้เปลี่ยนรูปแบบเป็น: [โจทย์ถามอะไร? -> ตอบข้อไหน? -> ทำไมข้อนี้ถูก? -> ทำไมข้ออื่นถึงผิด?] แล้วข้ามแพทเทิร์นปกติไปเลย
-6. 🖼️ **รูปภาพและตาราง:** หากพบรูปภาพ กราฟ หรือตารางที่สำคัญในต้นฉบับ ให้พิมพ์คำว่า `[IMAGE_PLACEHOLDER]` แทรกไว้ตรงจุดนั้นเสมอ (ระบบจะนำภาพจริงมาแทรกให้)
-7. หากเป็นหน้าว่างจริงๆ ให้ตอบแค่ 'NON_CONTENT'
+4. หากพบข้อมูลในสไลด์ที่ล้าสมัย หรือผิดพลาดเมื่อเทียบกับ Guideline ปัจจุบัน ให้ทักท้วงในหัวข้อ 'ระวัง:' เสมอ
+5. ⚠️ **กฎสำหรับข้อสอบ:** ถ้าเนื้อหาเป็นโจทย์ ให้เปลี่ยนรูปแบบเป็น: [โจทย์ถามอะไร? -> ตอบข้อไหน? -> ทำไมข้อนี้ถูก? -> ทำไมข้ออื่นถึงผิด?] แล้วข้ามเนื้อหาปกติ
+6. 🖼️ **รูปภาพและตาราง:** หากพบรูปภาพ กราฟ หรือตารางที่สำคัญ ให้พิมพ์คำว่า `[IMAGE_PLACEHOLDER]` แทรกไว้ตรงจุดนั้นเสมอ (ระบบจะนำภาพจริงมาแทรกให้)
 
 {{strict_pattern}}
 
 ===INFOGRAPHIC_SUMMARY===
-(บังคับต้องพิมพ์คำว่า ===INFOGRAPHIC_SUMMARY=== ไว้บรรทัดสุดท้ายเสมอ และเขียนสรุปเนื้อหาหน้านี้ด้านล่าง เพื่อนำไปประกอบเป็น "Infographic Cheat Sheet" 1-3 หน้าจบ ท้ายเล่ม: 
-- ให้สรุปเฉพาะ "คีย์เวิร์ดสำคัญสุดๆ" จัดเป็น Bullet สั้นๆ ทวนไว ตัดน้ำทิ้งทั้งหมด ห้ามเกิน 3-4 บรรทัด
-- หากหน้าไหนมีรูป แผนภาพ หรือตารางที่เป็นหัวใจสำคัญ **บังคับ** ให้แทรกคำว่า `[IMAGE_PLACEHOLDER]` 1 ครั้ง เพื่อดึงรูปจริงมาประกอบการจำ)"""
+(บังคับต้องพิมพ์คำว่า ===INFOGRAPHIC_SUMMARY=== ไว้บรรทัดสุดท้ายเสมอ และเขียนสรุปเนื้อหาหน้านี้เพื่อทำเป็น "การ์ดสรุป Infographic": 
+- สรุปโครงสร้างให้อ่านง่ายเป็น Bullet points เนื้อหาต้องครบถ้วนแต่กระชับ
+- เน้นทำตัวหนาที่ **คีย์เวิร์ดสำคัญ** 
+- หากหน้านี้มีรูปภาพหรือตารางที่เป็นหัวใจสำคัญ **บังคับ** ให้แทรกคำว่า `[IMAGE_PLACEHOLDER]` 1 ครั้ง เพื่อดึงรูปจริงมาประกอบการอ่านทบทวน)"""
 
     if use_custom_prompt:
         custom_prompt_text = st.text_area("แก้ไข Prompt", value=st.session_state.custom_prompt_text if st.session_state.custom_prompt_text else base_prompt_template, height=300, disabled=is_locked)
@@ -340,19 +335,6 @@ with st.sidebar:
         st.session_state.custom_prompt_text = base_prompt_template
         
     st.session_state.use_custom_prompt = use_custom_prompt
-
-    # 🌟 ระบบ Customize Prompt สำหรับ One-Sheet (อิงโครงสร้างเดิม ห้ามลบ)
-    st.markdown("### 📝 ตั้งค่าระบบรวบรวม Infographic")
-    use_custom_summary_prompt = st.checkbox("เปิดใช้งานระบบแก้ไขข้อความส่วนหัว", value=st.session_state.use_custom_summary_prompt, disabled=is_locked)
-    default_summary_prompt_1 = "ระบบจะรวบรวมการ์ดสรุปย่อยๆ และจัดเรียงเป็น Infographic Cheat Sheet (1-3 หน้าจบ) ให้โดยอัตโนมัติตอนกดดาวน์โหลด PDF"
-    default_summary_prompt_2 = ""
-
-    if use_custom_summary_prompt:
-        st.session_state.custom_summary_prompt_1 = st.text_area("หมายเหตุการรวบรวม", value=st.session_state.custom_summary_prompt_1 or default_summary_prompt_1, height=100, disabled=is_locked)
-    else:
-        st.session_state.custom_summary_prompt_1 = default_summary_prompt_1
-        st.session_state.custom_summary_prompt_2 = default_summary_prompt_2
-    st.session_state.use_custom_summary_prompt = use_custom_summary_prompt
 
     if st.button("💾 บันทึกการตั้งค่า", use_container_width=True): save_workspace(); st.toast("บันทึกการตั้งค่าแล้ว!")
 
@@ -427,10 +409,6 @@ if st.session_state.pdf_bytes and not is_locked:
 if st.session_state.pdf_bytes:
     doc_in = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
     total_pages = len(doc_in)
-    
-    if st.session_state.settings_changed_alert and not st.session_state.is_running:
-        st.warning("🔔 ตรวจพบการเปลี่ยนการตั้งค่า: หน้าถัดไปจะใช้รูปแบบใหม่ทันที")
-        if st.button("รับทราบ"): st.session_state.settings_changed_alert = False
 
     if st.session_state.show_start_popup:
         with st.container():
@@ -472,7 +450,7 @@ if st.session_state.pdf_bytes:
             st.image(data["img"], use_container_width=True)
             ext_imgs = data.get("extracted_images", [])
             if ext_imgs:
-                with st.expander(f"🖼️ ดูรูปที่สกัดมาได้จากหน้านี้ ({len(ext_imgs)} รูป)"):
+                with st.expander(f"🖼️ ดูรูปที่คัดกรองมาได้จากหน้านี้ ({len(ext_imgs)} รูป)"):
                     for img_bytes in ext_imgs: st.image(img_bytes, use_container_width=True)
         with col_v2:
             st.markdown("### 📝 บันทึก Margin Note")
@@ -498,11 +476,11 @@ if st.session_state.pdf_bytes:
     else:
         st.info(f"⏳ หน้าที่ {curr+1} ยังไม่ได้ประมวลผล...")
 
-    # --- 9. Export PDF & Master Review ---
+    # --- 9. Export PDF & Infographic Cheat Sheet ---
     st.write("---")
     if len(st.session_state.processed_data) > 0:
-        if st.button("📦 รวบรวมและเตรียมดาวน์โหลด PDF (พร้อม Infographic Cheat Sheet ท้ายเล่ม)"):
-            with st.spinner("กำลังประกอบร่างไฟล์ PDF ฉบับสมบูรณ์ (อาจใช้เวลาสักครู่ เนื่องจากจัดเรียง Infographic + รูปภาพ)..."):
+        if st.button("📦 ดาวน์โหลด PDF (พร้อม Infographic Cheat Sheet รูปแบบ 3 คอลัมน์)"):
+            with st.spinner("กำลังประกอบร่างไฟล์ PDF ฉบับสมบูรณ์ และจัดหน้า Infographic..."):
                 doc_out = fitz.open()
                 arch_path = "."
                 layout_prefs = { "Intro": pos_intro, "Mech": pos_mech, "Warn": pos_warn, "HY": pos_hy, "Quiz": pos_quiz }
@@ -519,7 +497,6 @@ if st.session_state.pdf_bytes:
                     if margin_right_pct > 0: p_out.draw_rect(fitz.Rect(w, 0, new_w, new_h), color=bg_color, fill=bg_color, width=0)
                     if margin_bottom_pct > 0: p_out.draw_rect(fitz.Rect(0, h, w, new_h), color=bg_color, fill=bg_color, width=0)
                     
-                    # 🔥 กล่องด้านขวาลากยาวสุดขอบล่าง (L-Shape Fix)
                     rects = {
                         "ด้านขวา": fitz.Rect(w + 10, 10, new_w - 10, new_h - 10), 
                         "ด้านล่าง": fitz.Rect(10, h + 10, w - 10, new_h - 10), 
@@ -557,7 +534,7 @@ if st.session_state.pdf_bytes:
                                 try: p_out.insert_htmlbox(box, f"<style>{css}</style><body>{html}</body>", archive=fitz.Archive(arch_path))
                                 except: p_out.insert_textbox(box, text_chunk, fontsize=f_size)
                 
-                # --- ส่วนที่ 2: Infographic Cheat Sheet (สรุป 3 คอลัมน์ อัดแน่น 1-3 หน้าจบ) ---
+                # --- ส่วนที่ 2: Infographic Cheat Sheet (สรุป 3 คอลัมน์ อัดแน่น) ---
                 snippets_list = []
                 for i in range(total_pages):
                     if i in st.session_state.processed_data and i in st.session_state.selected_pages:
@@ -569,13 +546,11 @@ if st.session_state.pdf_bytes:
                             info_summary = info_summary.replace("Infographic Summary:", "").strip()
                             html_parts = info_summary.split("[IMAGE_PLACEHOLDER]")
                             
-                            # ออกแบบการ์ดแต่ละใบให้ดู Clean & Minimal
-                            card_html = f"<div style='background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px; padding: 12px; margin-bottom: 15px; border-left: 4px solid #3B82F6;'><h4 style='margin: 0 0 5px 0; color: #1E293B; font-size: 16px; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px;'>📌 สไลด์ {i+1}</h4>"
+                            # 🔥 ดีไซน์การ์ดแต่ละใบให้ดู Clean & Minimal
+                            card_html = f"<div style='background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 6px; padding: 10px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border-top: 3px solid #3B82F6;'><h4 style='margin: 0 0 6px 0; color: #0F172A; font-size: 15px; border-bottom: 1px solid #F1F5F9; padding-bottom: 4px;'>📍 หน้า {i+1}</h4>"
                             
                             for idx, part in enumerate(html_parts):
                                 formatted_part = markdown.markdown(part, extensions=['tables'])
-                                # เน้นคำตัวหนาให้อ่านง่าย
-                                formatted_part = re.sub(r'<strong>(.*?)</strong>', r'<strong style="color:#0F172A; font-weight:bold; background:#FEF9C3; padding:0 3px; border-radius:3px;">\1</strong>', formatted_part)
                                 card_html += formatted_part
                                 
                                 if idx < len(html_parts) - 1 and idx < len(images):
@@ -583,39 +558,38 @@ if st.session_state.pdf_bytes:
                                     try:
                                         with open(tmp_filename, "wb") as f: f.write(images[idx])
                                         all_temp_files.append(tmp_filename)
-                                        # แทรกรูปสวยๆ ขนาดกะทัดรัด (ไม่เกิน 150px) ให้อยู่ในการ์ดพอดี
-                                        card_html += f"<div style='text-align:center; margin-top: 8px;'><img src='{tmp_filename}' style='max-width: 100%; max-height: 150px; border-radius: 4px; border: 1px solid #CBD5E1;'></div>"
+                                        # 🔥 บังคับขนาดรูปในหน้าสรุปให้ไม่พัง Layout
+                                        card_html += f"<div style='text-align:center; margin: 6px 0;'><img src='{tmp_filename}' style='max-width: 100%; height: auto; max-height: 120px; object-fit: contain; border-radius: 4px; border: 1px solid #CBD5E1;'></div>"
                                     except: pass
                                     
                             card_html += "</div>"
                             snippets_list.append(card_html)
 
                 if snippets_list:
-                    # ใช้เทคนิคสร้าง HTML Table 3 คอลัมน์ เพื่อกระจายการ์ดให้พอดีใน PyMuPDF
-                    items_per_page = 15 # ใส่การ์ดได้ประมาณ 15 ใบต่อ 1 หน้า A4 (อัดแน่น)
+                    # ระบบคำนวณการจัดหน้า 3 คอลัมน์ (เฉลี่ยประมาณ 12-15 การ์ดต่อหน้า)
+                    items_per_page = 15 
                     total_info_pages = (len(snippets_list) + items_per_page - 1) // items_per_page
                     
                     for p in range(total_info_pages):
                         p_rev = doc_out.new_page(width=595, height=842) # A4 Size
                         chunk = snippets_list[p * items_per_page : (p + 1) * items_per_page]
                         
-                        # แยกการ์ดออกเป็น 3 คอลัมน์ ซ้าย-กลาง-ขวา
                         columns = [[], [], []]
                         for idx, snip in enumerate(chunk):
                             columns[idx % 3].append(snip)
                             
                         html_table = "<table width='100%' style='border:none; margin:0; padding:0;'><tr style='vertical-align:top; border:none;'>"
                         for col in columns:
-                            html_table += "<td width='33.33%' style='padding: 0 6px; border:none;'>"
+                            html_table += "<td width='33.33%' style='padding: 0 5px; border:none;'>"
                             html_table += "".join(col)
                             html_table += "</td>"
                         html_table += "</tr></table>"
                         
-                        css_info = f"@font-face {{ font-family: 'T'; src: url('THSarabunNew.ttf'); }} body {{ font-family: 'T'; font-size: 14px; line-height: 1.4; color: #334155; }} h2 {{ text-align: center; color: #0F172A; border-bottom: 2px solid #3B82F6; padding-bottom: 5px; margin-bottom: 15px; }} ul {{ padding-left: 15px; margin: 4px 0; }} li {{ margin-bottom: 3px; }}"
+                        css_info = f"@font-face {{ font-family: 'T'; src: url('THSarabunNew.ttf'); }} body {{ font-family: 'T'; font-size: 14px; line-height: 1.4; color: #334155; }} h2 {{ text-align: center; color: #0F172A; border-bottom: 2px solid #3B82F6; padding-bottom: 5px; margin-bottom: 12px; }} ul {{ padding-left: 14px; margin: 4px 0; }} li {{ margin-bottom: 2px; }} b, strong {{ font-weight: bold; color: #0F172A; background-color: #FEF9C3; padding: 0 2px; border-radius: 2px; }}"
                         
                         final_page_html = f"<style>{css_info}</style><body><h2>⭐ CLINICAL INFOGRAPHIC CHEAT SHEET ({p+1}/{total_info_pages}) ⭐</h2>{html_table}</body>"
                         
-                        p_rev.insert_htmlbox(fitz.Rect(30, 30, 565, 812), final_page_html, archive=fitz.Archive(arch_path))
+                        p_rev.insert_htmlbox(fitz.Rect(20, 30, 575, 812), final_page_html, archive=fitz.Archive(arch_path))
 
                 # ล้างรูปชั่วคราวทิ้ง เพื่อไม่ให้รกเซิร์ฟเวอร์
                 for tmp_file in all_temp_files:
@@ -708,7 +682,7 @@ if st.session_state.pdf_bytes:
                 p_img = doc_in[target].get_pixmap(dpi=75)
                 img = Image.open(io.BytesIO(p_img.tobytes("png")))
                 extracted_images = extract_images_from_page(doc_in, target)
-                raw_text = doc_in[target].get_text() # สกัด text ดิบกันข้อมูลตกหล่น
+                raw_text = doc_in[target].get_text()
 
                 # 2. สร้าง Context Window (+/- 10 หน้า)
                 start_idx, end_idx = max(0, target - 10), min(total_pages, target + 11)
@@ -720,7 +694,7 @@ if st.session_state.pdf_bytes:
                         local_context_lines.append(f"{prefix} หน้า {idx+1} ({g_info['topic']}): {g_info['summary']} [Priority: {g_info.get('priority','MEDIUM')}]")
                 local_context_text = "\n".join(local_context_lines)
 
-                # 3. Triage & Pattern Building สำหรับ Margin Note
+                # 3. Triage & Pattern Building
                 page_priority = st.session_state.global_data.get(target, {}).get('priority', 'MEDIUM')
                 pattern_parts = []
                 
@@ -762,14 +736,13 @@ if st.session_state.pdf_bytes:
                             main_text = ""
                             info_summary = ""
                         else:
-                            # แยกร่างระหว่าง Margin Note และ Infographic Summary
                             if "===INFOGRAPHIC_SUMMARY===" in final_text:
                                 parts = final_text.split("===INFOGRAPHIC_SUMMARY===")
                                 main_text = parts[0].strip()
                                 info_summary = parts[1].strip()
                             else:
                                 main_text = final_text
-                                info_summary = final_text # Fallback กรณี AI ลืมพิมพ์ตัวแบ่ง
+                                info_summary = final_text 
                             
                         is_success = True
                         st.session_state.processed_data[target] = {
