@@ -227,20 +227,6 @@ def apply_custom_tags(text):
         html = html.replace(old, new).replace(f"<p>{new}</p>", new) 
     return html
 
-def get_layout_preview(c_pos, hy_pos, q_pos):
-    layout_map = {"ด้านขวา": [], "ด้านล่าง": [], "ด้านซ้าย": [], "ด้านบน": []}
-    layout_map[c_pos].append("<span style='color: #334155;'><b>เนื้อหา</b></span>")
-    layout_map[hy_pos].append("<span style='color: #BE123C;'><b>High-Yield</b></span>")
-    layout_map[q_pos].append("<span style='color: #0369A1;'><b>Quiz</b></span>")
-    
-    right_box = f"<div style='flex: 0.35; background: #F8FAFC; padding: 5px; font-size: 8px; border-left: 1px solid #E2E8F0;'>{'<br><br>'.join(layout_map['ด้านขวา'])}</div>" if layout_map['ด้านขวา'] else ""
-    left_box = f"<div style='flex: 0.35; background: #F8FAFC; padding: 5px; font-size: 8px; border-right: 1px solid #E2E8F0;'>{'<br><br>'.join(layout_map['ด้านซ้าย'])}</div>" if layout_map['ด้านซ้าย'] else ""
-    bottom_box = f"<div style='height: 40px; background: #F8FAFC; padding: 5px; font-size: 8px; border-top: 1px solid #E2E8F0; text-align: center;'>{' | '.join(layout_map['ด้านล่าง'])}</div>" if layout_map['ด้านล่าง'] else ""
-    top_box = f"<div style='height: 40px; background: #F8FAFC; padding: 5px; font-size: 8px; border-bottom: 1px solid #E2E8F0; text-align: center;'>{' | '.join(layout_map['ด้านบน'])}</div>" if layout_map['ด้านบน'] else ""
-    
-    html_str = f"""<div style="width: 100%; height: 180px; border-radius: 10px; background: white; border: 2px solid #E2E8F0; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.02);">{top_box}<div style="flex: 1; display: flex; flex-direction: row;">{left_box}<div style="flex: 1; background: #F1F5F9; border: 2px dashed #CBD5E1; margin: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #64748B; font-weight: bold; border-radius: 6px;">Slide</div>{right_box}</div>{bottom_box}</div>"""
-    st.markdown(html_str, unsafe_allow_html=True)
-
 # --- 4. Sidebar: Note Settings ---
 with st.sidebar:
     st.markdown("<h2 style='color: #2D3748;'>🩺 Note Settings</h2>", unsafe_allow_html=True)
@@ -306,7 +292,8 @@ with st.sidebar:
         want_clinic = st.checkbox("🩺 การนำไปใช้ในคลินิก", value=True, disabled=is_locked)
         want_warn = st.checkbox("⚠️ ระวัง / ข้อมูลล้าสมัย", value=True, disabled=is_locked)
 
-    want_summary = st.checkbox("🚨 สรุป High-Yield / Trick", value=True, disabled=is_locked)
+    want_summary = st.checkbox("🚨 สรุป High-Yield", value=True, disabled=is_locked)
+    want_trick = st.checkbox("💡 ทริคจำ & การโยงข้อมูล (Cross-ref)", value=True, disabled=is_locked)
     want_quiz = st.checkbox("📝 Quiz", value=True, disabled=is_locked)
     
     quiz_count = 3
@@ -368,7 +355,8 @@ with st.sidebar:
 
     if st.button("💾 บันทึกการตั้งค่า", use_container_width=True): save_workspace(); st.toast("บันทึกการตั้งค่าแล้ว!")
 
-    current_settings = { "y": med_year, "mt": max_tokens, "mr": margin_right_pct, "mb": margin_bottom_pct, "wi": want_intro, "wc": want_concept, "wm": want_mech, "we": want_example, "wcl": want_clinic, "ww": want_warn, "ws": want_summary, "wq": want_quiz, "qc": quiz_count, "wa": want_answer, "pi": pos_intro, "pm": pos_mech, "pw": pos_warn, "ph": pos_hy, "pq": pos_quiz }
+    # แก้ไขบั๊กตัวแปร want_trick หายไปจาก Dictionary ตรงนี้เรียบร้อยครับ
+    current_settings = { "y": med_year, "mt": max_tokens, "mr": margin_right_pct, "mb": margin_bottom_pct, "wi": want_intro, "wc": want_concept, "wm": want_mech, "we": want_example, "wcl": want_clinic, "ww": want_warn, "ws": want_summary, "wt": want_trick, "wq": want_quiz, "qc": quiz_count, "wa": want_answer, "pi": pos_intro, "pm": pos_mech, "pw": pos_warn, "ph": pos_hy, "pq": pos_quiz }
     if not is_locked and st.session_state.last_settings and current_settings != st.session_state.last_settings:
         st.session_state.settings_changed_alert = True
     st.session_state.last_settings = current_settings
