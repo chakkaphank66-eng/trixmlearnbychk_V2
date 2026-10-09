@@ -329,7 +329,9 @@ with st.sidebar:
 {{strict_pattern}}
 
 ===INFOGRAPHIC_SUMMARY===
-(บังคับต้องพิมพ์คำว่า ===INFOGRAPHIC_SUMMARY=== ไว้บรรทัดสุดท้ายเสมอ และเขียนสรุปเนื้อหาหน้านี้ด้านล่าง เพื่อใช้ทำ Master Review ท้ายเล่ม: สกัดหัวข้อหลัก ย่อย คีย์เวิร์ด จัดเป็นตาราง/Bullet กระชับ ทวนไว และต้องใส่ [IMAGE_PLACEHOLDER] แทรกตามความเหมาะสมเพื่อดึงรูปสำคัญมาแสดงในหน้าสรุปด้วย เนื้อหาต้องครบถ้วนไม่ตกหล่น)"""
+(บังคับต้องพิมพ์คำว่า ===INFOGRAPHIC_SUMMARY=== ไว้บรรทัดสุดท้ายเสมอ และเขียนสรุปเนื้อหาหน้านี้ด้านล่าง เพื่อนำไปประกอบเป็น "Infographic Cheat Sheet" 1-3 หน้าจบ ท้ายเล่ม: 
+- ให้สรุปเฉพาะ "คีย์เวิร์ดสำคัญสุดๆ" จัดเป็น Bullet สั้นๆ ทวนไว ตัดน้ำทิ้งทั้งหมด ห้ามเกิน 3-4 บรรทัด
+- หากหน้าไหนมีรูป แผนภาพ หรือตารางที่เป็นหัวใจสำคัญ **บังคับ** ให้แทรกคำว่า `[IMAGE_PLACEHOLDER]` 1 ครั้ง เพื่อดึงรูปจริงมาประกอบการจำ)"""
 
     if use_custom_prompt:
         custom_prompt_text = st.text_area("แก้ไข Prompt", value=st.session_state.custom_prompt_text if st.session_state.custom_prompt_text else base_prompt_template, height=300, disabled=is_locked)
@@ -339,15 +341,14 @@ with st.sidebar:
         
     st.session_state.use_custom_prompt = use_custom_prompt
 
-    # 🌟 ระบบ Customize Prompt สำหรับ One-Sheet Summary (โบนัสแผ่นสุดท้าย)
-    st.markdown("### 📝 ปรับแต่ง Prompt สำหรับ One-Sheet (ใบปะหน้า)")
-    use_custom_summary_prompt = st.checkbox("เปิดใช้งานแก้ไข Prompt สำหรับ Summary", value=st.session_state.use_custom_summary_prompt, disabled=is_locked)
-    default_summary_prompt_1 = f"สรุปภาพรวมเนื้อหาทั้งหมดสำหรับ นสพ.ปี {med_year} จัดรูปแบบมินิมอล **มีข้อมูลเปรียบเทียบให้ทำเป็น Markdown Table ทันที**:\nข้อมูลอ้างอิง:\n{{full_summaries}} เรียงเนื้อหาตามเอกสาร จัดเรียงหัวข้อหลัก ย่อย ให้ชัดเจน"
-    default_summary_prompt_2 = "สร้าง Clinical One-Sheet Summary แผ่นที่ 2 (เน้นการเจาะลึกโรคและการวินิจฉัย)\nจากข้อมูลอ้างอิง สกัดข้อมูลโรคสำคัญออกมา นำเสนอเป็นตาราง Markdown:\n1. โรค\n2. อาการเด่น\n3. เกณฑ์วินิจฉัย/Mnemonic\n4. Differential diagnosis\n5. Management/ยา\nข้อมูลอ้างอิง:\n{full_summaries}"
+    # 🌟 ระบบ Customize Prompt สำหรับ One-Sheet (อิงโครงสร้างเดิม ห้ามลบ)
+    st.markdown("### 📝 ตั้งค่าระบบรวบรวม Infographic")
+    use_custom_summary_prompt = st.checkbox("เปิดใช้งานระบบแก้ไขข้อความส่วนหัว", value=st.session_state.use_custom_summary_prompt, disabled=is_locked)
+    default_summary_prompt_1 = "ระบบจะรวบรวมการ์ดสรุปย่อยๆ และจัดเรียงเป็น Infographic Cheat Sheet (1-3 หน้าจบ) ให้โดยอัตโนมัติตอนกดดาวน์โหลด PDF"
+    default_summary_prompt_2 = ""
 
     if use_custom_summary_prompt:
-        st.session_state.custom_summary_prompt_1 = st.text_area("Prompt แผ่นที่ 1", value=st.session_state.custom_summary_prompt_1 or default_summary_prompt_1, height=150, disabled=is_locked)
-        st.session_state.custom_summary_prompt_2 = st.text_area("Prompt แผ่นที่ 2", value=st.session_state.custom_summary_prompt_2 or default_summary_prompt_2, height=150, disabled=is_locked)
+        st.session_state.custom_summary_prompt_1 = st.text_area("หมายเหตุการรวบรวม", value=st.session_state.custom_summary_prompt_1 or default_summary_prompt_1, height=100, disabled=is_locked)
     else:
         st.session_state.custom_summary_prompt_1 = default_summary_prompt_1
         st.session_state.custom_summary_prompt_2 = default_summary_prompt_2
@@ -355,7 +356,6 @@ with st.sidebar:
 
     if st.button("💾 บันทึกการตั้งค่า", use_container_width=True): save_workspace(); st.toast("บันทึกการตั้งค่าแล้ว!")
 
-    # แก้ไขบั๊กตัวแปร want_trick หายไปจาก Dictionary ตรงนี้เรียบร้อยครับ
     current_settings = { "y": med_year, "mt": max_tokens, "mr": margin_right_pct, "mb": margin_bottom_pct, "wi": want_intro, "wc": want_concept, "wm": want_mech, "we": want_example, "wcl": want_clinic, "ww": want_warn, "ws": want_summary, "wt": want_trick, "wq": want_quiz, "qc": quiz_count, "wa": want_answer, "pi": pos_intro, "pm": pos_mech, "pw": pos_warn, "ph": pos_hy, "pq": pos_quiz }
     if not is_locked and st.session_state.last_settings and current_settings != st.session_state.last_settings:
         st.session_state.settings_changed_alert = True
@@ -493,7 +493,7 @@ if st.session_state.pdf_bytes:
                     if st.session_state.is_running: st.session_state.is_running = False; st.warning("⚠️ หยุดรันชั่วคราวให้แก้ไข กด Continue เพื่อรันต่อ")
                     st.rerun()
                     
-            with st.expander("📊 พรีวิว Master Review (สรุปแบบ Infographic ของหน้านี้)"):
+            with st.expander("📊 พรีวิวการ์ด Infographic สรุปหน้านี้"):
                 st.markdown(apply_custom_tags(data.get("info_summary", "ไม่มีข้อมูลสรุป")), unsafe_allow_html=True)
     else:
         st.info(f"⏳ หน้าที่ {curr+1} ยังไม่ได้ประมวลผล...")
@@ -501,8 +501,8 @@ if st.session_state.pdf_bytes:
     # --- 9. Export PDF & Master Review ---
     st.write("---")
     if len(st.session_state.processed_data) > 0:
-        if st.button("📦 รวบรวมและเตรียมดาวน์โหลด PDF (พร้อม Master Review หนาจุใจ)"):
-            with st.spinner("กำลังประกอบร่างไฟล์ PDF ฉบับสมบูรณ์ (อาจใช้เวลา 1-2 นาที เนื่องจากต้องดึงรูปและต่อข้อมูล)..."):
+        if st.button("📦 รวบรวมและเตรียมดาวน์โหลด PDF (พร้อม Infographic Cheat Sheet ท้ายเล่ม)"):
+            with st.spinner("กำลังประกอบร่างไฟล์ PDF ฉบับสมบูรณ์ (อาจใช้เวลาสักครู่ เนื่องจากจัดเรียง Infographic + รูปภาพ)..."):
                 doc_out = fitz.open()
                 arch_path = "."
                 layout_prefs = { "Intro": pos_intro, "Mech": pos_mech, "Warn": pos_warn, "HY": pos_hy, "Quiz": pos_quiz }
@@ -557,71 +557,65 @@ if st.session_state.pdf_bytes:
                                 try: p_out.insert_htmlbox(box, f"<style>{css}</style><body>{html}</body>", archive=fitz.Archive(arch_path))
                                 except: p_out.insert_textbox(box, text_chunk, fontsize=f_size)
                 
-                # --- ส่วนที่ 2: Master Review (หน้าสรุป A4 รวบยอดท้ายเล่ม) ---
-                p_divider = doc_out.new_page(width=595, height=842) # ขนาด A4 แนวตั้ง
-                p_divider.insert_text(fitz.Point(120, 400), "📘 MASTER REVIEW (INFOGRAPHIC)", fontsize=28, color=(0.06,0.09,0.17))
-                
-                slot = 0
-                p_rev = None
+                # --- ส่วนที่ 2: Infographic Cheat Sheet (สรุป 3 คอลัมน์ อัดแน่น 1-3 หน้าจบ) ---
+                snippets_list = []
                 for i in range(total_pages):
                     if i in st.session_state.processed_data and i in st.session_state.selected_pages:
                         data = st.session_state.processed_data[i]
-                        info_summary = data.get("info_summary", "")
+                        info_summary = data.get("info_summary", "").strip()
                         images = data.get("extracted_images", [])
                         
                         if info_summary:
-                            # 1 หน้า A4 ใส่สรุปได้ 2 หน้าสไลด์ (ใช้พื้นที่คุ้มค่าสุดๆ)
-                            if slot == 0:
-                                p_rev = doc_out.new_page(width=595, height=842)
-                                box = fitz.Rect(40, 40, 555, 410) # ครึ่งบน
-                            else:
-                                box = fitz.Rect(40, 430, 555, 800) # ครึ่งล่าง
-                            
+                            info_summary = info_summary.replace("Infographic Summary:", "").strip()
                             html_parts = info_summary.split("[IMAGE_PLACEHOLDER]")
-                            review_html = ""
+                            
+                            # ออกแบบการ์ดแต่ละใบให้ดู Clean & Minimal
+                            card_html = f"<div style='background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 8px; padding: 12px; margin-bottom: 15px; border-left: 4px solid #3B82F6;'><h4 style='margin: 0 0 5px 0; color: #1E293B; font-size: 16px; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px;'>📌 สไลด์ {i+1}</h4>"
+                            
                             for idx, part in enumerate(html_parts):
-                                review_html += markdown.markdown(part, extensions=['tables'])
+                                formatted_part = markdown.markdown(part, extensions=['tables'])
+                                # เน้นคำตัวหนาให้อ่านง่าย
+                                formatted_part = re.sub(r'<strong>(.*?)</strong>', r'<strong style="color:#0F172A; font-weight:bold; background:#FEF9C3; padding:0 3px; border-radius:3px;">\1</strong>', formatted_part)
+                                card_html += formatted_part
+                                
                                 if idx < len(html_parts) - 1 and idx < len(images):
                                     tmp_filename = f"tmp_export_info_img_p{i}_{idx}.png"
                                     try:
                                         with open(tmp_filename, "wb") as f: f.write(images[idx])
                                         all_temp_files.append(tmp_filename)
-                                        # แทรกรูปสวยๆ จัดให้อยู่ตรงกลาง
-                                        review_html += f"<div style='text-align:center;'><img src='{tmp_filename}' style='max-width: 90%; max-height: 180px; border-radius: 8px; border: 2px solid #CBD5E1; margin: 10px 0;'></div>"
+                                        # แทรกรูปสวยๆ ขนาดกะทัดรัด (ไม่เกิน 150px) ให้อยู่ในการ์ดพอดี
+                                        card_html += f"<div style='text-align:center; margin-top: 8px;'><img src='{tmp_filename}' style='max-width: 100%; max-height: 150px; border-radius: 4px; border: 1px solid #CBD5E1;'></div>"
                                     except: pass
-                            
-                            # ตัดคำว่า Infographic Summary ออกถ้า AI ติดมาด้วย
-                            review_html = review_html.replace("Infographic Summary:", "")
-                            review_html = apply_custom_tags(review_html)
-                            
-                            f_size = calc_dynamic_fontsize(review_html, box.width, box.height)
-                            css_rev = f"@font-face {{ font-family: 'T'; src: url('THSarabunNew.ttf'); }} body {{ font-family: 'T'; font-size: {f_size}px; line-height: 1.5; color: #1E293B; }} h3 {{ color: #3B82F6; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; margin-top: 0; }} b, strong {{ color: #0F172A; font-weight: bold; background: #FEF9C3; padding: 0 4px; border-radius: 4px; }} table {{ width: 100%; border-collapse: collapse; margin: 10px 0; }} th {{ background: #F1F5F9; border: 1px solid #CBD5E1; padding: 6px; }} td {{ border: 1px solid #E2E8F0; padding: 6px; }} ul {{ padding-left: 20px; }}"
-                            
-                            # ออกแบบการ์ดสวยงามสำหรับหน้ารีวิว
-                            final_card_html = f"<style>{css_rev}</style><body><div style='background: #F8FAFC; border: 2px solid #E2E8F0; border-radius: 12px; padding: 15px; height: 100%;'><h3>📑 สรุปหน้า {i+1}</h3>{review_html}</div></body>"
-                            
-                            try: p_rev.insert_htmlbox(box, final_card_html, archive=fitz.Archive(arch_path))
-                            except: p_rev.insert_textbox(box, info_summary.replace("[IMAGE_PLACEHOLDER]", "[ภาพประกอบ]"), fontsize=f_size)
-                            
-                            slot = (slot + 1) % 2
-                            
-                # --- ส่วนที่ 3: One-Sheet Summary (ใบปะหน้า โบนัส) ---
-                if st.session_state.full_summaries:
-                    model_os = genai.GenerativeModel(get_best_available_model(st.session_state.flash_models_list) or "gemini-3.1-flash-lite")
-                    safety = { HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE, HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE, HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE, HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE }
-                    data_chunk = st.session_state.full_summaries[:30000]
-                    
-                    try: os_res_1 = model_os.generate_content(st.session_state.custom_summary_prompt_1.replace("{full_summaries}", data_chunk), safety_settings=safety); os_html_1 = markdown.markdown(os_res_1.text, extensions=['tables'])
-                    except: os_html_1 = "Summary 1 ไม่พร้อม"
-                    p_os_1 = doc_out.new_page(width=595, height=842)
-                    css_os = f"@font-face {{ font-family: 'T'; src: url('THSarabunNew.ttf'); }} body {{ font-family: 'T'; font-size: {calc_dynamic_fontsize(os_html_1, 515, 762)}px; color: #334155; }} h2 {{ text-align: center; border-bottom: 2px solid #0EA5E9; padding-bottom: 5px;}} table {{ width: 100%; border-collapse: collapse; margin: 10px 0;}} th, td {{ border: 1px solid #E2E8F0; padding: 6px; }} th {{ background-color: #F8FAFC; }}"
-                    p_os_1.insert_htmlbox(fitz.Rect(40,40,555,802), f"<style>{css_os}</style><body><h2>⭐ CLINICAL ONE-SHEET (OVERVIEW) ⭐</h2>{os_html_1}</body>", archive=fitz.Archive(arch_path))
+                                    
+                            card_html += "</div>"
+                            snippets_list.append(card_html)
 
-                    try: os_res_2 = model_os.generate_content(st.session_state.custom_summary_prompt_2.replace("{full_summaries}", data_chunk), safety_settings=safety); os_html_2 = markdown.markdown(os_res_2.text, extensions=['tables'])
-                    except: os_html_2 = "Summary 2 ไม่พร้อม"
-                    p_os_2 = doc_out.new_page(width=595, height=842)
-                    css_os_2 = f"@font-face {{ font-family: 'T'; src: url('THSarabunNew.ttf'); }} body {{ font-family: 'T'; font-size: {calc_dynamic_fontsize(os_html_2, 515, 762)}px; color: #334155; }} h2 {{ text-align: center; border-bottom: 2px solid #14B8A6; padding-bottom: 5px;}} table {{ width: 100%; border-collapse: collapse; margin: 10px 0;}} th, td {{ border: 1px solid #E2E8F0; padding: 6px; }} th {{ background-color: #F0FDFA; }}"
-                    p_os_2.insert_htmlbox(fitz.Rect(40,40,555,802), f"<style>{css_os_2}</style><body><h2>⭐ CLINICAL ONE-SHEET (DISEASE FOCUS) ⭐</h2>{os_html_2}</body>", archive=fitz.Archive(arch_path))
+                if snippets_list:
+                    # ใช้เทคนิคสร้าง HTML Table 3 คอลัมน์ เพื่อกระจายการ์ดให้พอดีใน PyMuPDF
+                    items_per_page = 15 # ใส่การ์ดได้ประมาณ 15 ใบต่อ 1 หน้า A4 (อัดแน่น)
+                    total_info_pages = (len(snippets_list) + items_per_page - 1) // items_per_page
+                    
+                    for p in range(total_info_pages):
+                        p_rev = doc_out.new_page(width=595, height=842) # A4 Size
+                        chunk = snippets_list[p * items_per_page : (p + 1) * items_per_page]
+                        
+                        # แยกการ์ดออกเป็น 3 คอลัมน์ ซ้าย-กลาง-ขวา
+                        columns = [[], [], []]
+                        for idx, snip in enumerate(chunk):
+                            columns[idx % 3].append(snip)
+                            
+                        html_table = "<table width='100%' style='border:none; margin:0; padding:0;'><tr style='vertical-align:top; border:none;'>"
+                        for col in columns:
+                            html_table += "<td width='33.33%' style='padding: 0 6px; border:none;'>"
+                            html_table += "".join(col)
+                            html_table += "</td>"
+                        html_table += "</tr></table>"
+                        
+                        css_info = f"@font-face {{ font-family: 'T'; src: url('THSarabunNew.ttf'); }} body {{ font-family: 'T'; font-size: 14px; line-height: 1.4; color: #334155; }} h2 {{ text-align: center; color: #0F172A; border-bottom: 2px solid #3B82F6; padding-bottom: 5px; margin-bottom: 15px; }} ul {{ padding-left: 15px; margin: 4px 0; }} li {{ margin-bottom: 3px; }}"
+                        
+                        final_page_html = f"<style>{css_info}</style><body><h2>⭐ CLINICAL INFOGRAPHIC CHEAT SHEET ({p+1}/{total_info_pages}) ⭐</h2>{html_table}</body>"
+                        
+                        p_rev.insert_htmlbox(fitz.Rect(30, 30, 565, 812), final_page_html, archive=fitz.Archive(arch_path))
 
                 # ล้างรูปชั่วคราวทิ้ง เพื่อไม่ให้รกเซิร์ฟเวอร์
                 for tmp_file in all_temp_files:
@@ -704,7 +698,7 @@ if st.session_state.pdf_bytes:
 
             if target is not None:
                 if target not in st.session_state.selected_pages:
-                    st.session_state.processed_data[target] = {"ai_text": "", "user_text": "", "img": doc_in[target].get_pixmap(dpi=50).tobytes("png")}; st.rerun()
+                    st.session_state.processed_data[target] = {"ai_text": "", "user_text": "", "info_summary": "", "img": doc_in[target].get_pixmap(dpi=50).tobytes("png")}; st.rerun()
 
                 st.session_state.status_mode = 'yellow' if is_recheck else 'blue'
                 msg = f"🔄 ซ่อมหน้าที่ Error (หน้า {target+1})" if is_recheck else f"⚡ ลงรายละเอียดหน้าที่ {target+1} / {total_pages}"
@@ -765,7 +759,6 @@ if st.session_state.pdf_bytes:
                         st.session_state.estimated_tokens_used += len(final_text) 
                         
                         if "NON_CONTENT" in final_text: 
-                            final_text = ""
                             main_text = ""
                             info_summary = ""
                         else:
@@ -778,10 +771,6 @@ if st.session_state.pdf_bytes:
                                 main_text = final_text
                                 info_summary = final_text # Fallback กรณี AI ลืมพิมพ์ตัวแบ่ง
                             
-                            # เก็บสะสมข้อมูลทำ One-Sheet หน้าสุดท้าย (แผ่นแถม)
-                            if want_summary and "High-Yield:" in main_text and "LOW" not in page_priority:
-                                st.session_state.full_summaries += f"\n[Page {target+1}] " + main_text.split("High-Yield:")[-1].split("Quiz:")[0]
-                        
                         is_success = True
                         st.session_state.processed_data[target] = {
                             "ai_text": main_text, 
