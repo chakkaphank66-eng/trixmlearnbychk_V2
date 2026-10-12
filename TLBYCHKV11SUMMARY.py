@@ -757,11 +757,11 @@ if st.session_state.pdf_bytes:
                                 try: p_out.insert_htmlbox(box, f"<style>{css}</style><body>{html}</body>", archive=arch)
                                 except: p_out.insert_textbox(box, text_chunk, fontsize=f_size)
                             
-                # --- 🌟 ระบบสร้าง One-Sheet Summary 5 แผ่น (เปิดใช้ Google Search Grounding) ---
+                # --- 🌟 ระบบสร้าง One-Sheet Summary 5 แผ่น (เปิดใช้ Google Search Grounding ที่แก้ไขแล้ว) ---
                 if st.session_state.full_summaries:
                     model_os = genai.GenerativeModel(
                         get_best_available_model(st.session_state.flash_models_list) or "gemini-3.1-flash-lite",
-                        tools=[{"google_search": {}}] # เปิด Search Engine สำหรับสืบค้น Official Diagnostic Criteria
+                        tools=["google_search_retrieval"] # เปิด Search Engine ค้นหา Official Criteria อย่างถูกต้อง
                     )
                     safety = { HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE, HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE, HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE, HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE }
                     
