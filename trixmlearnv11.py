@@ -14,7 +14,7 @@ import math
 
 # --- 1. การตั้งค่าเริ่มต้น และ Session State ---
 keys_to_init = {
-    'processed_data': {},  # เก็บเฉพาะ {'ai_text': '', 'user_text': ''} (ไม่เก็บ img เพื่อเซฟ RAM)
+    'processed_data': {},  # เก็บเฉพาะ {'ai_text': '', 'user_text': ''} เพื่อประหยัด RAM
     'page_idx': 0,
     'is_running': False,
     'stop_clicked': False,
@@ -35,11 +35,11 @@ keys_to_init = {
 
     # --- ตัวแปรสำหรับระบบ Global Context ---
     'phase': 'idle',  # idle, global_scan, detail_scan
-    'global_data': {},  # เก็บ {'topic': '', 'summary': ''} ของแต่ละหน้า
+    'global_data': {},
     'global_context_text': "",
-    'fast_index_mode': True,  # ดึงโครงสร้างสไลด์ความเร็วสูงด้วย PyMuPDF (ไม่เสียเวลา Phase 1)
+    'fast_index_mode': True,
 
-    # --- ตัวแปรสำหรับหน้าจอเลือกหน้า (Pagination ป้องกันเว็บค้างเมื่อ >100 หน้า) ---
+    # --- ตัวแปรสำหรับหน้าจอเลือกหน้าและโหมดการอ่าน ---
     'customizer_page': 0,
     'quick_review_mode': False,
 
@@ -53,11 +53,12 @@ keys_to_init = {
     'custom_summary_prompt_2': "",
     'custom_summary_prompt_3': "",
     'custom_summary_prompt_4': "",
-    'generated_summary_sheets': {},  # เก็บผลลัพธ์สรุป 4 แผ่นแยกไว้ ไม่ให้ไปถ่วงตอนกดสร้าง PDF
+    'generated_summary_sheets': {},
 
     # --- ตัวแปรสำหรับระบบดาวน์โหลด PDF ---
     'compiled_pdf_bytes': None,
-    'compiled_pdf_size_mb': 0.0
+    'compiled_pdf_size_mb': 0.0,
+    'orig_uncompressed_mb': 0.0
 }
 
 for k, v in keys_to_init.items():
@@ -93,7 +94,6 @@ st.markdown("""
     
     .edit-box strong, .edit-box b { color: #0F172A; font-weight: 700; }
     
-    /* กล่องหัวข้อที่แยกสีตามหน้าที่ทางความคิด (Cognitive Mapping) */
     .box-visual { background-color: #EFF6FF; border-left: 4px solid #3B82F6; padding: 6px 12px; margin: 8px 0 6px 0; border-radius: 0 6px 6px 0; }
     .box-intro { background-color: #F8FAFC; border-left: 4px solid #94A3B8; padding: 4px 12px; margin: 8px 0 4px 0; border-radius: 0 6px 6px 0; }
     .box-concept { background-color: #EEF2FF; border-left: 4px solid #6366F1; padding: 5px 12px; margin: 10px 0 4px 0; border-radius: 0 6px 6px 0; }
@@ -101,7 +101,7 @@ st.markdown("""
     .box-clinic { background-color: #F0FDFA; border-left: 4px solid #14B8A6; padding: 5px 12px; margin: 10px 0 4px 0; border-radius: 0 6px 6px 0; }
     .box-warn { background-color: #FFF7ED; border-left: 4px solid #F97316; padding: 5px 12px; margin: 10px 0 4px 0; border-radius: 0 6px 6px 0; }
     .box-trick { background-color: #FEF9C3; border-left: 4px solid #EAB308; padding: 5px 12px; margin: 10px 0 4px 0; border-radius: 0 6px 6px 0; }
-    .box-hy { background-color: #FFF1F2; border-left: 4px solid #F43F5E; padding: 6px 12px; margin: 12px 0 6px 0; border-radius: 0 6px 6px 0; }
+    .box-hy { background-color: #FFF1F2; border-left: 5px solid #F43F5E; padding: 8px 14px; margin: 12px 0 6px 0; border-radius: 0 6px 6px 0; }
     .box-quiz { background-color: #F0F9FF; border-left: 4px solid #0EA5E9; padding: 5px 12px; margin: 10px 0 4px 0; border-radius: 0 6px 6px 0; }
     .box-ans { background-color: #F0FDF4; border-left: 4px solid #22C55E; padding: 5px 12px; margin: 6px 0 4px 0; border-radius: 0 6px 6px 0; }
     
@@ -134,13 +134,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. ฟังก์ชันจัดการหน่วยความจำและไฟล์ (Memory-Safe Helper Functions) ---
+# --- 3. ฟังก์ชันจัดการหน่วยความจำและคำนวณขนาดฟอนต์อัจฉริยะ ---
 
 WORKSPACE_META_FILE = "autosave_workspace_meta.pkl"
 WORKSPACE_PDF_FILE = "autosave_source.pdf"
 
 def save_workspace(save_pdf_binary=False):
-    """บันทึกเฉพาะข้อความและสถานะ ไม่บันทึกรูปภาพ 100+ หน้าลงไฟล์ซ้ำๆ เพื่อป้องกันแอพค้าง"""
     if save_pdf_binary and st.session_state.pdf_bytes:
         try:
             with open(WORKSPACE_PDF_FILE, "wb") as f_pdf:
@@ -202,7 +201,6 @@ def clear_workspace():
 
 @st.cache_data(max_entries=30, show_spinner=False)
 def render_page_png(pdf_bytes, page_number, dpi=110):
-    """เรนเดอร์ภาพสไลด์เฉพาะหน้าที่เปิดดู และจำกัด Cache สูงสุดแค่ 30 หน้า ไม่ให้กิน RAM"""
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         page = doc[page_number]
@@ -213,7 +211,6 @@ def render_page_png(pdf_bytes, page_number, dpi=110):
     return img_bytes
 
 def build_local_sliding_context(target_idx, window=2):
-    """สร้างบริบทเฉพาะหน้าใกล้เคียง (Sliding Window) ช่วยให้ AI เชื่อมโยงแม่นยำและประหยัด Token กว่า 90%"""
     lines = []
     sorted_pages = sorted(st.session_state.selected_pages)
     if target_idx in sorted_pages:
@@ -233,7 +230,6 @@ def build_local_sliding_context(target_idx, window=2):
     return "\n".join(lines) if lines else "ไม่มีข้อมูลบริบทข้างเคียง"
 
 def rebuild_full_summaries():
-    """รวบรวมเฉพาะส่วน High-Yield ของทุกหน้าอย่างเป็นระเบียบสำหรับทำแผ่นสรุป"""
     chunks = []
     for i in sorted(st.session_state.processed_data.keys()):
         txt = st.session_state.processed_data[i].get("user_text") or st.session_state.processed_data[i].get("ai_text", "")
@@ -258,14 +254,51 @@ def get_best_available_model(models_list):
             return m
     return sorted_models[0]
 
-def calc_dynamic_fontsize(text, rect_width, rect_height):
-    if not text or rect_width <= 0 or rect_height <= 0:
-        return 16
-    area = rect_width * rect_height
-    plain_text = re.sub(r'<[^>]+>', '', text)
-    char_count = max(len(plain_text), 1)
-    estimated_size = (area / (char_count * 0.42)) ** 0.5
-    return max(12, min(28, int(estimated_size)))
+def calc_optimal_fontsize(html_text, rect_width, rect_height, is_hy_only=False):
+    """
+    คำนวณขนาดฟอนต์อัจฉริยะด้วยการจำลองการตัดบรรทัดภาษาไทยจริง (Thai Line-Wrapping Simulator)
+    - ตัดสระลอย/วรรณยุกต์ไทยออกจากการคำนวณความกว้างแนวนอน
+    - หากเป็นกล่อง High-Yield จะขยายฟอนต์ให้ใหญ่เต็มพื้นที่กรอบ (สูงสุด 58px)
+    """
+    if not html_text or rect_width <= 0 or rect_height <= 0:
+        return 20
+
+    # แยกบรรทัดตามโครงสร้าง HTML บล็อกและรายการ
+    block_split = re.sub(r'</?(li|p|div|tr|h\d|br)[^>]*>', '\n', html_text)
+    raw_lines = [re.sub(r'<[^>]+>', '', ln).strip() for ln in block_split.split('\n')]
+    raw_lines = [ln for ln in raw_lines if ln]
+
+    if not raw_lines:
+        return 20
+
+    # นับเฉพาะตัวอักษรที่กินพื้นที่แนวนอน (ไม่นับสระลอยและวรรณยุกต์ไทย)
+    thai_combining = r'[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]'
+    eff_lengths = [max(1, len(re.sub(thai_combining, '', ln))) for ln in raw_lines]
+    num_blocks = len(eff_lengths)
+
+    max_f = 58 if is_hy_only else 40
+    min_f = 20 if is_hy_only else 13
+    # ฟอนต์ THSarabunNew มีขนาดตัวแคบ จึงใช้ค่าสัมประสิทธิ์ความกว้างต่อตัวอักษรต่ำ (0.37 - 0.40)
+    char_width_factor = 0.37 if is_hy_only else 0.41
+    line_height_factor = 1.35 if is_hy_only else 1.42
+    target_fill_ratio = 0.94 if is_hy_only else 0.88
+
+    for f_size in range(max_f, min_f - 1, -1):
+        usable_w = max(40.0, rect_width - 20.0)
+        chars_per_line = max(8.0, usable_w / (f_size * char_width_factor))
+
+        total_lines = 0.0
+        for length in eff_lengths:
+            total_lines += math.ceil(length / chars_per_line)
+
+        # บวกพื้นที่ระยะห่างระหว่างหัวข้อและขอบกล่อง
+        block_spacing_lines = num_blocks * (0.22 if is_hy_only else 0.28)
+        est_height = (total_lines + block_spacing_lines) * (f_size * line_height_factor)
+
+        if est_height <= rect_height * target_fill_ratio:
+            return f_size
+
+    return min_f
 
 def split_content_hq(text):
     c_txt, hy_txt, q_txt = "", "", ""
@@ -331,7 +364,6 @@ def apply_custom_tags(text, for_pdf=False):
 
     text = '\n'.join(new_lines)
 
-    # หากเป็นการแสดงผลบนหน้าเว็บ ให้ซ่อนเฉลยในปุ่มกด Active Recall เพื่อฝึกสมองคิดก่อนดูเฉลย
     if not for_pdf and "เฉลย:" in text:
         parts = text.split("เฉลย:", 1)
         before_ans = markdown.markdown(parts[0], extensions=['tables'])
@@ -362,8 +394,8 @@ def apply_custom_tags(text, for_pdf=False):
         ("Trick:", "<div class='box-trick'><b style='color: #A16207; font-size: 0.95em;'>💡 Trick จำติดสมอง</b></div>"),
         ("<strong>Trick:</strong>", "<div class='box-trick'><b style='color: #A16207; font-size: 0.95em;'>💡 Trick จำติดสมอง</b></div>"),
 
-        ("High-Yield:", "<div class='box-hy'><b style='color: #BE123C; font-size: 0.95em;'>🚨 High-Yield จุดออกสอบ</b></div>"),
-        ("<strong>High-Yield:</strong>", "<div class='box-hy'><b style='color: #BE123C; font-size: 0.95em;'>🚨 High-Yield จุดออกสอบ</b></div>"),
+        ("High-Yield:", "<div class='box-hy'><b style='color: #BE123C; font-size: 1.02em;'>🚨 High-Yield จุดออกสอบห้ามพลาด</b></div>"),
+        ("<strong>High-Yield:</strong>", "<div class='box-hy'><b style='color: #BE123C; font-size: 1.02em;'>🚨 High-Yield จุดออกสอบห้ามพลาด</b></div>"),
 
         ("Quiz:", "<div class='box-quiz'><b style='color: #0369A1; font-size: 0.95em;'>📝 ทดสอบความจำ (Active Recall)</b></div>"),
         ("<strong>Quiz:</strong>", "<div class='box-quiz'><b style='color: #0369A1; font-size: 0.95em;'>📝 ทดสอบความจำ (Active Recall)</b></div>"),
@@ -377,6 +409,40 @@ def apply_custom_tags(text, for_pdf=False):
         html = html.replace(f"<p>{new}</p>", new)
 
     return html
+
+def generate_all_4_summary_sheets(status_callback=None):
+    """สร้างสรุป 4 แผ่นอัตโนมัติจากเนื้อหา High-Yield ทั้งหมด"""
+    rebuild_full_summaries()
+    if not st.session_state.full_summaries.strip():
+        return False
+
+    model_os = genai.GenerativeModel(get_best_available_model(st.session_state.flash_models_list))
+    safety = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE
+    }
+    data_chunk = st.session_state.full_summaries[:120000]
+    prompt_keys = [
+        ("custom_summary_prompt_1", "แผ่นที่ 1: Overview & Core Concepts"),
+        ("custom_summary_prompt_2", "แผ่นที่ 2: Pathophysiology & Symptoms"),
+        ("custom_summary_prompt_3", "แผ่นที่ 3: Diagnosis & DDx"),
+        ("custom_summary_prompt_4", "แผ่นที่ 4: Management & Treatment")
+    ]
+    for idx, (pk, label) in enumerate(prompt_keys, start=1):
+        if status_callback:
+            status_callback(idx, f"กำลังสกัดสรุปท้ายเล่ม {label} ({idx}/4)...")
+        p_tmpl = getattr(st.session_state, pk)
+        p_sheet = p_tmpl.replace("{full_summaries}", data_chunk)
+        try:
+            os_res = model_os.generate_content(p_sheet, safety_settings=safety)
+            st.session_state.generated_summary_sheets[idx] = os_res.text.strip()
+        except Exception as e:
+            st.session_state.generated_summary_sheets[idx] = f"ไม่สามารถสร้าง {label} ได้ในขณะนี้ ({e})"
+        time.sleep(0.4)
+    save_workspace()
+    return True
 
 # --- 4. Sidebar: Note Settings ---
 with st.sidebar:
@@ -429,8 +495,7 @@ with st.sidebar:
     st.session_state.fast_index_mode = st.checkbox(
         "⚡ สแกนบริบทความเร็วสูง (0.1 วินาที ไม่เสียโควตา AI ใน Phase 1)",
         value=st.session_state.fast_index_mode,
-        disabled=is_locked,
-        help="ดึงหัวข้อจากเลเยอร์ข้อความใน PDF โดยตรง เหมาะมากสำหรับไฟล์มากกว่า 100 หน้า"
+        disabled=is_locked
     )
 
     st.markdown("### 📐 จัดสรรพื้นที่กระดาษ (Layout)")
@@ -444,7 +509,7 @@ with st.sidebar:
 
     st.markdown("### 📋 ข้อมูลที่ต้องการ")
     want_content = st.checkbox("คำอธิบายเนื้อหา (กระชับ+ชี้จุดดูสไลด์)", value=True, disabled=is_locked)
-    want_summary = st.checkbox("สรุป High-Yield", value=True, disabled=is_locked)
+    want_summary = st.checkbox("สรุป High-Yield (ฟอนต์ใหญ่เต็มกรอบ)", value=True, disabled=is_locked)
     want_trick = st.checkbox("💡 ทริคจำ (Trick)", value=True, disabled=is_locked)
     want_quiz = st.checkbox("Quiz", value=True, disabled=is_locked)
 
@@ -456,7 +521,7 @@ with st.sidebar:
 
     get_layout_preview(content_pos, hy_pos, quiz_pos)
 
-    # 🌟 ระบบ Customize Prompt เนื้อหาหลัก (ปรับปรุงใหม่ให้กระชับ อ่านสนุก และดึงสายตากลับไปดูสไลด์)
+    # 🌟 ระบบ Customize Prompt เนื้อหาหลัก
     st.markdown("### 🛠️ ปรับแต่ง Prompt เนื้อหาหลัก")
     use_custom_prompt = st.checkbox("เปิดใช้งานแก้ไข Prompt หลัก", value=st.session_state.use_custom_prompt, disabled=is_locked)
 
@@ -602,7 +667,7 @@ else:
             st.session_state.show_reset_confirm = False
             st.rerun()
 
-# --- 6. ระบบเลือกหน้าแบบแบ่งเพจ (Paginated Page Customizer - แก้เว็บค้างเมื่อ >100 หน้า) ---
+# --- 6. ระบบเลือกหน้าแบบแบ่งเพจ (Paginated Page Customizer) ---
 if st.session_state.pdf_bytes and not is_locked:
     if "expander_open" not in st.session_state:
         st.session_state.expander_open = False
@@ -636,7 +701,6 @@ if st.session_state.pdf_bytes and not is_locked:
                     st.session_state.selected_pages = sorted(list(new_sel))
                     st.rerun()
 
-            # แบ่งแสดงผลทีละ 20 หน้า เพื่อไม่ให้ Browser ค้างเมื่ออัปโหลด >100 หน้า
             ITEMS_PER_PAGE = 20
             max_cust_pages = max(1, math.ceil(total_pages / ITEMS_PER_PAGE))
             c_p1, c_p2, c_p3 = st.columns([1, 2, 1])
@@ -722,7 +786,7 @@ if st.session_state.pdf_bytes:
             value=st.session_state.quick_review_mode
         )
 
-    # --- 8. E-BOOK READER & EDITING (Visual-First Experience) ---
+    # --- 8. E-BOOK READER & EDITING ---
     st.write("---")
     st.subheader(f"📖 Clinical E-Book: หน้า {st.session_state.page_idx + 1} / {total_pages}")
 
@@ -745,7 +809,6 @@ if st.session_state.pdf_bytes:
     col_v1, col_v2 = st.columns([1.15, 1])
 
     with col_v1:
-        # เรนเดอร์สไลด์ความคมชัดสูงเฉพาะหน้าปัจจุบัน ไม่เปลือง RAM
         curr_img_bytes = render_page_png(st.session_state.pdf_bytes, curr, dpi=120)
         st.image(curr_img_bytes, use_container_width=True, caption=f"สไลด์หน้า {curr + 1} (มองภาพควบคู่กับจุดโฟกัสด้านขวา)")
 
@@ -794,199 +857,218 @@ if st.session_state.pdf_bytes:
         else:
             st.info(f"⏳ หน้าที่ {curr+1} ยังไม่ได้ประมวลผล (อยู่ในคิว)...")
 
-    # --- 9. ระบบสร้างสรุป 4 แผ่น & ประกอบไฟล์ PDF (แยกขั้นตอนเพื่อความเสถียร 100% แม้ไฟล์ >200 หน้า) ---
+    # --- 9. ระบบสร้างไฟล์ PDF ฉบับสมบูรณ์ (แนบสรุป 4 แผ่นท้ายเล่มอัตโนมัติ + บีบอัดเล็กสุดเป็นค่าเริ่มต้น) ---
     st.write("---")
     if len(st.session_state.processed_data) > 0:
-        st.subheader("📦 ขั้นตอนจัดทำสรุป 4 แผ่น และดาวน์โหลด PDF ฉบับสมบูรณ์")
+        st.subheader("📦 จัดทำและดาวน์โหลดไฟล์ PDF ฉบับสมบูรณ์ (พร้อมสรุป 4 แผ่นท้ายเล่ม)")
 
-        col_s1, col_s2 = st.columns(2)
-
-        with col_s1:
-            if st.button("✨ 1. สร้าง/อัปเดตแผ่นสรุป One-Sheet 4 แผ่น (ตัวเลือกเสริม)", use_container_width=True):
-                rebuild_full_summaries()
-                if not st.session_state.full_summaries.strip():
-                    st.warning("ยังไม่มีข้อมูล High-Yield สำหรับทำสรุป")
-                else:
-                    with st.spinner("กำลังสกัดแก่นเนื้อหาทั้งสไลด์เป็น One-Sheet Summary 4 แผ่น..."):
-                        model_os = genai.GenerativeModel(get_best_available_model(st.session_state.flash_models_list))
-                        safety = {
-                            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE
-                        }
-                        # รองรับสไลด์ >100 หน้าโดยคัดกรองเนื้อหาได้สูงสุดถึง 120,000 ตัวอักษร
-                        data_chunk = st.session_state.full_summaries[:120000]
-                        prompt_keys = ["custom_summary_prompt_1", "custom_summary_prompt_2", "custom_summary_prompt_3", "custom_summary_prompt_4"]
-                        for idx, pk in enumerate(prompt_keys, start=1):
-                            p_tmpl = getattr(st.session_state, pk)
-                            p_sheet = p_tmpl.replace("{full_summaries}", data_chunk)
-                            try:
-                                os_res = model_os.generate_content(p_sheet, safety_settings=safety)
-                                st.session_state.generated_summary_sheets[idx] = os_res.text.strip()
-                            except Exception as e:
-                                st.session_state.generated_summary_sheets[idx] = f"ไม่สามารถสร้างแผ่นที่ {idx} ได้: {e}"
-                            time.sleep(0.5)
-                        save_workspace()
-                        st.success("✅ สร้างสรุป 4 แผ่นสำเร็จ! สามารถกดประกอบไฟล์ PDF ด้านขวาได้เลย")
-
-        with col_s2:
+        col_opt1, col_opt2 = st.columns([1.4, 1])
+        with col_opt1:
+            # ตั้งค่า Default (index=0) ให้เป็นบีบอัดขั้นสุด (เล็กที่สุด) เพื่อประหยัดพื้นที่เครื่อง
             comp_level = st.selectbox(
-                "ระดับการบีบอัดไฟล์ PDF (สำหรับเปิดใน iPad/GoodNotes):",
-                ["สมดุลและคมชัด (แนะนำสำหรับ 100+ หน้า)", "บีบอัดสูงสุด (ขนาดไฟล์เล็กที่สุด)"],
+                "🗜️ ระดับการบีบอัดไฟล์ PDF (ตั้งค่าเริ่มต้นที่เล็กที่สุดเพื่อประหยัดพื้นที่เครื่อง):",
+                [
+                    "1. บีบอัดขั้นสุด (ไฟล์เล็กที่สุด ประหยัดพื้นที่เครื่องสูงสุด - ค่าเริ่มต้น)",
+                    "2. บีบอัดสมดุล (ขนาดปานกลาง ความคมชัดสูง)",
+                    "3. บีบอัดน้อย (รักษาคุณภาพภาพต้นฉบับสูงสุด)"
+                ],
                 index=0
             )
-            if st.button("🛠️ 2. ประกอบไฟล์ PDF ฉบับสมบูรณ์ (รองรับ 100–400 หน้า)", type="primary", use_container_width=True):
-                pdf_prog = st.progress(0.0, text="กำลังเริ่มต้นประกอบไฟล์ PDF...")
-                doc_in = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
-                doc_out = fitz.open()
-                arch = fitz.Archive(".")
-                has_custom_font = os.path.exists("THSarabunNew.ttf")
+        with col_opt2:
+            include_4_sheets = st.checkbox("✅ แนบสรุป One-Sheet 4 แผ่นต่อท้ายไฟล์ PDF", value=True)
+            force_regen_sheets = st.checkbox("🔄 บังคับให้ AI เขียนสรุป 4 แผ่นใหม่ทั้งหมด", value=False)
+
+        if st.button("📦 รวบรวมและประกอบไฟล์ PDF ฉบับสมบูรณ์ (พร้อมสรุป 4 แผ่นท้ายเล่ม)", type="primary", use_container_width=True):
+            pdf_prog = st.progress(0.0, text="กำลังเตรียมข้อมูลสำหรับสร้าง PDF...")
+
+            # ขั้นตอนที่ 1: สร้างสรุป 4 แผ่นอัตโนมัติหากยังไม่มี หรือหากผู้ใช้สั่งเขียนใหม่
+            if include_4_sheets and (len(st.session_state.generated_summary_sheets) < 4 or force_regen_sheets):
+                def update_sheet_status(sheet_idx, msg_txt):
+                    pdf_prog.progress(sheet_idx * 0.05, text=msg_txt)
+                generate_all_4_summary_sheets(status_callback=update_sheet_status)
+
+            # ขั้นตอนที่ 2: วาดสไลด์และกล่องข้อความทุกหน้า พร้อมคำนวณขนาดฟอนต์ High-Yield ให้ใหญ่เต็มกรอบ
+            doc_in = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
+            doc_out = fitz.open()
+            arch = fitz.Archive(".")
+            has_custom_font = os.path.exists("THSarabunNew.ttf")
+
+            try:
+                used_positions = {content_pos, hy_pos, quiz_pos}
+                for i in range(total_pages):
+                    if i % 4 == 0 or i == total_pages - 1:
+                        prog_val = 0.20 + (0.65 * ((i + 1) / total_pages))
+                        pdf_prog.progress(min(0.85, prog_val), text=f"กำลังประกอบสไลด์หน้าที่ {i + 1} / {total_pages}...")
+
+                    p_in = doc_in[i]
+                    w, h = p_in.rect.width, p_in.rect.height
+
+                    pad_left = (w * (margin_side_pct / 100.0)) if ("ด้านซ้าย" in used_positions and margin_side_pct > 0) else 0
+                    pad_right = (w * (margin_side_pct / 100.0)) if ("ด้านขวา" in used_positions and margin_side_pct > 0) else 0
+                    pad_top = (h * (margin_vert_pct / 100.0)) if ("ด้านบน" in used_positions and margin_vert_pct > 0) else 0
+                    pad_bottom = (h * (margin_vert_pct / 100.0)) if ("ด้านล่าง" in used_positions and margin_vert_pct > 0) else 0
+
+                    new_w = w + pad_left + pad_right
+                    new_h = h + pad_top + pad_bottom
+
+                    p_out = doc_out.new_page(width=new_w, height=new_h)
+                    bg_color = (0.97, 0.98, 0.99)
+                    p_out.draw_rect(fitz.Rect(0, 0, new_w, new_h), color=bg_color, fill=bg_color, width=0)
+
+                    slide_rect = fitz.Rect(pad_left, pad_top, pad_left + w, pad_top + h)
+                    p_out.show_pdf_page(slide_rect, doc_in, i)
+
+                    # จัดกรอบพื้นที่ให้สมดุล: ด้านขวา/ซ้ายกินความสูงเต็มหน้า, ด้านล่าง/บนกินความกว้างใต้สไลด์พอดีเพื่อให้ฟอนต์ High-Yield ใหญ่เต็มกรอบ
+                    rects = {
+                        "ด้านขวา": fitz.Rect(pad_left + w + 10, 10, new_w - 10, new_h - 10) if pad_right > 25 else None,
+                        "ด้านซ้าย": fitz.Rect(10, 10, pad_left - 10, new_h - 10) if pad_left > 25 else None,
+                        "ด้านล่าง": fitz.Rect(pad_left + 10, pad_top + h + 10, pad_left + w - 10, new_h - 10) if pad_bottom > 25 else None,
+                        "ด้านบน": fitz.Rect(pad_left + 10, 10, pad_left + w - 10, pad_top - 10) if pad_top > 25 else None
+                    }
+
+                    if i in st.session_state.processed_data:
+                        raw_txt = st.session_state.processed_data[i].get("user_text") or st.session_state.processed_data[i].get("ai_text", "")
+                        if raw_txt and "⚠️" not in raw_txt:
+                            raw_txt = re.sub(r'^[•\-\*]\s*$', '', raw_txt, flags=re.MULTILINE)
+                            c_txt, hq_txt, q_txt = split_content_hq(raw_txt)
+
+                            box_contents = {"ด้านขวา": [], "ด้านล่าง": [], "ด้านซ้าย": [], "ด้านบน": []}
+                            if c_txt:
+                                box_contents[content_pos].append(("content", c_txt))
+                            if hq_txt:
+                                box_contents[hy_pos].append(("hy", hq_txt))
+                            if q_txt:
+                                box_contents[quiz_pos].append(("quiz", q_txt))
+
+                            font_face_css = """
+                            @font-face { font-family: 'T'; src: url('THSarabunNew.ttf'); }
+                            @font-face { font-family: 'T'; font-weight: bold; src: url('THSarabunNew Bold.ttf'); }
+                            """ if has_custom_font else ""
+                            font_family_val = "'T', sans-serif" if has_custom_font else "sans-serif"
+
+                            for pos, items in box_contents.items():
+                                box = rects.get(pos)
+                                if not items or box is None or box.is_empty or box.is_infinite:
+                                    continue
+
+                                combined_text = "\n\n".join([txt_val for _, txt_val in items])
+                                is_hy_box = (len(items) == 1 and items[0][0] == "hy") or (pos == hy_pos and pos != content_pos)
+
+                                html = apply_custom_tags(combined_text, for_pdf=True)
+                                f_size = calc_optimal_fontsize(html, box.width, box.height, is_hy_only=is_hy_box)
+                                line_h = "1.36" if is_hy_box else "1.42"
+
+                                css = f"""
+                                {font_face_css}
+                                body {{ font-family: {font_family_val}; font-size: {f_size}px; line-height: {line_h}; color: #0F172A; margin: 0; padding: 0; }}
+                                b, strong {{ font-weight: bold; }}
+                                .box-visual {{ background-color: #EFF6FF; border-left: 3.5px solid #3B82F6; padding: 3px 8px; margin: 4px 0; }}
+                                .box-intro {{ background-color: #F8FAFC; border-left: 3.5px solid #94A3B8; padding: 3px 8px; margin: 4px 0; }}
+                                .box-concept {{ background-color: #EEF2FF; border-left: 3.5px solid #6366F1; padding: 3px 8px; margin: 4px 0; }}
+                                .box-mech {{ background-color: #F1F5F9; border-left: 3.5px solid #475569; padding: 3px 8px; margin: 4px 0; }}
+                                .box-clinic {{ background-color: #F0FDFA; border-left: 3.5px solid #14B8A6; padding: 3px 8px; margin: 4px 0; }}
+                                .box-warn {{ background-color: #FFF7ED; border-left: 3.5px solid #F97316; padding: 3px 8px; margin: 4px 0; }}
+                                .box-trick {{ background-color: #FEF9C3; border-left: 3.5px solid #EAB308; padding: 3px 8px; margin: 4px 0; }}
+                                .box-hy {{ background-color: #FFF1F2; border-left: 4.5px solid #F43F5E; padding: 4px 10px; margin: 4px 0 6px 0; }}
+                                .box-quiz {{ background-color: #F0F9FF; border-left: 3.5px solid #0EA5E9; padding: 3px 8px; margin: 4px 0; }}
+                                .box-ans {{ background-color: #F0FDF4; border-left: 3.5px solid #22C55E; padding: 3px 8px; margin: 4px 0; }}
+                                table {{ border-collapse: collapse; width: 100%; margin: 6px 0; }}
+                                th {{ background-color: #F8FAFC; border: 1px solid #CBD5E1; padding: 4px; color: #334155; text-align: left; }}
+                                td {{ border: 1px solid #E2E8F0; padding: 4px; color: #475569; }}
+                                ul, ol {{ margin: 4px 0; padding-left: 18px; }}
+                                li {{ margin-bottom: 5px; }}
+                                p {{ margin: 4px 0; }}
+                                """
+                                try:
+                                    p_out.insert_htmlbox(box, f"<style>{css}</style><body>{html}</body>", archive=arch)
+                                except Exception:
+                                    try:
+                                        plain_fallback = re.sub(r'<[^>]+>', '', html)
+                                        p_out.insert_htmlbox(box, f"<body>{plain_fallback}</body>")
+                                    except Exception:
+                                        pass
+
+                # ขั้นตอนที่ 3: แนบแผ่นสรุป One-Sheet Summary ทั้ง 4 แผ่นต่อท้ายเล่มเสมอ
+                if include_4_sheets and st.session_state.generated_summary_sheets:
+                    pdf_prog.progress(0.88, text="กำลังแนบแผ่นสรุป One-Sheet Summary 4 แผ่นต่อท้ายเล่ม...")
+                    sheet_configs = [
+                        {"idx": 1, "title": "⭐ CLINICAL ONE-SHEET 1: OVERVIEW & CORE CONCEPTS ⭐", "border_color": "#0EA5E9", "th_bg": "#F8FAFC", "th_color": "#0F172A"},
+                        {"idx": 2, "title": "⚙️ CLINICAL ONE-SHEET 2: PATHOPHYSIOLOGY & SYMPTOMS ⚙️", "border_color": "#14B8A6", "th_bg": "#F0FDFA", "th_color": "#0F766E"},
+                        {"idx": 3, "title": "🎯 CLINICAL ONE-SHEET 3: DIAGNOSIS & DDX 🎯", "border_color": "#6366F1", "th_bg": "#EEF2FF", "th_color": "#4338CA"},
+                        {"idx": 4, "title": "🩺 CLINICAL ONE-SHEET 4: MANAGEMENT & TREATMENT 🩺", "border_color": "#F97316", "th_bg": "#FFF7ED", "th_color": "#C2410C"}
+                    ]
+                    font_face_css = """
+                    @font-face { font-family: 'T'; src: url('THSarabunNew.ttf'); }
+                    @font-face { font-family: 'T'; font-weight: bold; src: url('THSarabunNew Bold.ttf'); }
+                    """ if has_custom_font else ""
+                    font_family_val = "'T', sans-serif" if has_custom_font else "sans-serif"
+
+                    for cfg in sheet_configs:
+                        raw_md = st.session_state.generated_summary_sheets.get(cfg["idx"], "")
+                        if not raw_md:
+                            continue
+                        os_html = apply_custom_tags(raw_md, for_pdf=True)
+                        p_os = doc_out.new_page(width=595, height=842)  # ขนาด A4 มาตรฐาน
+                        f_size_os = calc_optimal_fontsize(os_html, 535, 760, is_hy_only=False)
+                        css_os = f"""
+                        {font_face_css}
+                        body {{ font-family: {font_family_val}; font-size: {f_size_os}px; color: #1E293B; line-height: 1.38; margin: 0; padding: 0; }}
+                        h2 {{ text-align: center; border-bottom: 2px solid {cfg['border_color']}; color: #0F172A; padding-bottom: 4px; margin-top: 0; font-size: 1.25em; }}
+                        table {{ width: 100%; border-collapse: collapse; margin: 6px 0; }}
+                        th, td {{ border: 1px solid #CBD5E1; padding: 5px; }}
+                        th {{ background-color: {cfg['th_bg']}; color: {cfg['th_color']}; font-weight: bold; text-align: left; }}
+                        ul, ol {{ margin: 4px 0; padding-left: 18px; }}
+                        li {{ margin-bottom: 4px; }}
+                        """
+                        try:
+                            p_os.insert_htmlbox(fitz.Rect(30, 30, 565, 812), f"<style>{css_os}</style><body><h2>{cfg['title']}</h2>{os_html}</body>", archive=arch)
+                        except Exception:
+                            pass
+
+                # ขั้นตอนที่ 4: บีบอัดไฟล์ขั้นสุด (ตัดฟอนต์ส่วนเกิน + ย่อรูปสไลด์ + รวบขยะโครงสร้าง PDF)
+                pdf_prog.progress(0.95, text="กำลังบีบอัดไฟล์ให้มีขนาดเล็กที่สุด (Ultra Compression)...")
 
                 try:
-                    used_positions = {content_pos, hy_pos, quiz_pos}
-                    for i in range(total_pages):
-                        if i % 5 == 0 or i == total_pages - 1:
-                            pdf_prog.progress((i + 1) / total_pages, text=f"กำลังประกอบสไลด์หน้าที่ {i + 1} / {total_pages}...")
+                    # ตัดชุดตัวอักษรในฟอนต์ที่ไม่ได้ใช้ออกเพื่อลดขนาดไฟล์ฟอนต์ฝังใน PDF
+                    doc_out.subset_fonts()
+                except Exception:
+                    pass
 
-                        p_in = doc_in[i]
-                        w, h = p_in.rect.width, p_in.rect.height
+                if "1. บีบอัดขั้นสุด" in comp_level:
+                    try:
+                        # บีบอัดรูปภาพความละเอียดสูงในสไลด์ต้นฉบับให้เล็กลงโดยยังอ่านชัดเจนบน iPad
+                        doc_out.rewrite_images(dpi_threshold=130, dpi_target=95, quality=68)
+                    except Exception:
+                        pass
+                    final_bytes = doc_out.tobytes(garbage=4, deflate=True, clean=True)
+                elif "2. บีบอัดสมดุล" in comp_level:
+                    try:
+                        doc_out.rewrite_images(dpi_threshold=180, dpi_target=130, quality=80)
+                    except Exception:
+                        pass
+                    final_bytes = doc_out.tobytes(garbage=4, deflate=True, clean=True)
+                else:
+                    final_bytes = doc_out.tobytes(garbage=3, deflate=True)
 
-                        # คำนวณพื้นที่ขยายกระดาษทั้ง 4 ด้านอย่างแม่นยำ ไม่ให้ติดลบหรือทับสไลด์เดิม
-                        pad_left = (w * (margin_side_pct / 100.0)) if ("ด้านซ้าย" in used_positions and margin_side_pct > 0) else 0
-                        pad_right = (w * (margin_side_pct / 100.0)) if ("ด้านขวา" in used_positions and margin_side_pct > 0) else 0
-                        pad_top = (h * (margin_vert_pct / 100.0)) if ("ด้านบน" in used_positions and margin_vert_pct > 0) else 0
-                        pad_bottom = (h * (margin_vert_pct / 100.0)) if ("ด้านล่าง" in used_positions and margin_vert_pct > 0) else 0
+                st.session_state.compiled_pdf_bytes = final_bytes
+                st.session_state.compiled_pdf_size_mb = len(final_bytes) / (1024 * 1024)
+                pdf_prog.empty()
+            finally:
+                doc_out.close()
+                doc_in.close()
+                gc.collect()
 
-                        new_w = w + pad_left + pad_right
-                        new_h = h + pad_top + pad_bottom
-
-                        p_out = doc_out.new_page(width=new_w, height=new_h)
-                        bg_color = (0.97, 0.98, 0.99)
-                        p_out.draw_rect(fitz.Rect(0, 0, new_w, new_h), color=bg_color, fill=bg_color, width=0)
-
-                        # วางสไลด์ต้นฉบับตรงกลางพื้นที่ที่จัดไว้
-                        slide_rect = fitz.Rect(pad_left, pad_top, pad_left + w, pad_top + h)
-                        p_out.show_pdf_page(slide_rect, doc_in, i)
-
-                        rects = {
-                            "ด้านขวา": fitz.Rect(pad_left + w + 10, pad_top + 10, new_w - 10, pad_top + h - 10) if pad_right > 25 else None,
-                            "ด้านซ้าย": fitz.Rect(10, pad_top + 10, pad_left - 10, pad_top + h - 10) if pad_left > 25 else None,
-                            "ด้านล่าง": fitz.Rect(pad_left + 10, pad_top + h + 10, new_w - 10, new_h - 10) if pad_bottom > 25 else None,
-                            "ด้านบน": fitz.Rect(pad_left + 10, 10, new_w - 10, pad_top - 10) if pad_top > 25 else None
-                        }
-
-                        if i in st.session_state.processed_data:
-                            raw_txt = st.session_state.processed_data[i].get("user_text") or st.session_state.processed_data[i].get("ai_text", "")
-                            if raw_txt and "⚠️" not in raw_txt:
-                                raw_txt = re.sub(r'^[•\-\*]\s*$', '', raw_txt, flags=re.MULTILINE)
-                                c_txt, hq_txt, q_txt = split_content_hq(raw_txt)
-
-                                box_contents = {"ด้านขวา": "", "ด้านล่าง": "", "ด้านซ้าย": "", "ด้านบน": ""}
-                                if c_txt:
-                                    box_contents[content_pos] += c_txt + "\n\n"
-                                if hq_txt:
-                                    box_contents[hy_pos] += hq_txt + "\n\n"
-                                if q_txt:
-                                    box_contents[quiz_pos] += q_txt + "\n\n"
-
-                                font_face_css = """
-                                @font-face { font-family: 'T'; src: url('THSarabunNew.ttf'); }
-                                @font-face { font-family: 'T'; font-weight: bold; src: url('THSarabunNew Bold.ttf'); }
-                                """ if has_custom_font else ""
-                                font_family_val = "'T', sans-serif" if has_custom_font else "sans-serif"
-
-                                for pos, text_chunk in box_contents.items():
-                                    box = rects.get(pos)
-                                    if not text_chunk.strip() or box is None or box.is_empty or box.is_infinite:
-                                        continue
-                                    html = apply_custom_tags(text_chunk, for_pdf=True)
-                                    f_size = calc_dynamic_fontsize(html, box.width, box.height)
-
-                                    css = f"""
-                                    {font_face_css}
-                                    body {{ font-family: {font_family_val}; font-size: {f_size}px; line-height: 1.45; color: #0F172A; margin: 0; padding: 0; }}
-                                    b, strong {{ font-weight: bold; }}
-                                    .box-visual {{ background-color: #EFF6FF; border-left: 3px solid #3B82F6; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-intro {{ background-color: #F8FAFC; border-left: 3px solid #94A3B8; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-concept {{ background-color: #EEF2FF; border-left: 3px solid #6366F1; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-mech {{ background-color: #F1F5F9; border-left: 3px solid #475569; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-clinic {{ background-color: #F0FDFA; border-left: 3px solid #14B8A6; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-warn {{ background-color: #FFF7ED; border-left: 3px solid #F97316; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-trick {{ background-color: #FEF9C3; border-left: 3px solid #EAB308; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-hy {{ background-color: #FFF1F2; border-left: 3px solid #F43F5E; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-quiz {{ background-color: #F0F9FF; border-left: 3px solid #0EA5E9; padding: 2px 8px; margin: 4px 0; }}
-                                    .box-ans {{ background-color: #F0FDF4; border-left: 3px solid #22C55E; padding: 2px 8px; margin: 4px 0; }}
-                                    table {{ border-collapse: collapse; width: 100%; margin: 6px 0; }}
-                                    th {{ background-color: #F8FAFC; border: 1px solid #CBD5E1; padding: 4px; color: #334155; text-align: left; }}
-                                    td {{ border: 1px solid #E2E8F0; padding: 4px; color: #475569; }}
-                                    ul, ol {{ margin: 4px 0; padding-left: 16px; }}
-                                    li {{ margin-bottom: 4px; }}
-                                    """
-                                    try:
-                                        p_out.insert_htmlbox(box, f"<style>{css}</style><body>{html}</body>", archive=arch)
-                                    except Exception:
-                                        try:
-                                            plain_fallback = re.sub(r'<[^>]+>', '', html)
-                                            p_out.insert_htmlbox(box, f"<body>{plain_fallback}</body>")
-                                        except Exception:
-                                            pass
-
-                    # แนบแผ่นสรุป One-Sheet Summary 4 แผ่นท้ายเล่ม (ถ้าสร้างไว้แล้ว)
-                    if st.session_state.generated_summary_sheets:
-                        sheet_configs = [
-                            {"idx": 1, "title": "⭐ CLINICAL ONE-SHEET 1: OVERVIEW & CORE CONCEPTS ⭐", "border_color": "#0EA5E9", "th_bg": "#F8FAFC", "th_color": "#0F172A"},
-                            {"idx": 2, "title": "⚙️ CLINICAL ONE-SHEET 2: PATHOPHYSIOLOGY & SYMPTOMS ⚙️", "border_color": "#14B8A6", "th_bg": "#F0FDFA", "th_color": "#0F766E"},
-                            {"idx": 3, "title": "🎯 CLINICAL ONE-SHEET 3: DIAGNOSIS & DDX 🎯", "border_color": "#6366F1", "th_bg": "#EEF2FF", "th_color": "#4338CA"},
-                            {"idx": 4, "title": "🩺 CLINICAL ONE-SHEET 4: MANAGEMENT & TREATMENT 🩺", "border_color": "#F97316", "th_bg": "#FFF7ED", "th_color": "#C2410C"}
-                        ]
-                        font_face_css = """
-                        @font-face { font-family: 'T'; src: url('THSarabunNew.ttf'); }
-                        @font-face { font-family: 'T'; font-weight: bold; src: url('THSarabunNew Bold.ttf'); }
-                        """ if has_custom_font else ""
-                        font_family_val = "'T', sans-serif" if has_custom_font else "sans-serif"
-
-                        for cfg in sheet_configs:
-                            raw_md = st.session_state.generated_summary_sheets.get(cfg["idx"], "")
-                            if not raw_md:
-                                continue
-                            os_html = markdown.markdown(raw_md, extensions=['tables'])
-                            p_os = doc_out.new_page(width=595, height=842)
-                            f_size_os = calc_dynamic_fontsize(os_html, 515, 762)
-                            css_os = f"""
-                            {font_face_css}
-                            body {{ font-family: {font_family_val}; font-size: {f_size_os}px; color: #334155; line-height: 1.4; }}
-                            h2 {{ text-align: center; border-bottom: 2px solid {cfg['border_color']}; color: #0F172A; padding-bottom: 5px; font-size: 1.2em; }}
-                            table {{ width: 100%; border-collapse: collapse; margin: 6px 0; }}
-                            th, td {{ border: 1px solid #E2E8F0; padding: 4px; }}
-                            th {{ background-color: {cfg['th_bg']}; color: {cfg['th_color']}; font-weight: bold; }}
-                            """
-                            try:
-                                p_os.insert_htmlbox(fitz.Rect(40, 40, 555, 802), f"<style>{css_os}</style><body><h2>{cfg['title']}</h2>{os_html}</body>", archive=arch)
-                            except Exception:
-                                pass
-
-                    pdf_prog.progress(0.98, text="กำลังบีบอัดและรวมฟอนต์ซ้ำซ้อน (Deduplicating Fonts & Streams)...")
-                    garbage_lv = 4 if "สูงสุด" in comp_level else 3
-                    final_bytes = doc_out.tobytes(garbage=garbage_lv, deflate=True, clean=True)
-                    st.session_state.compiled_pdf_bytes = final_bytes
-                    st.session_state.compiled_pdf_size_mb = len(final_bytes) / (1024 * 1024)
-                    pdf_prog.empty()
-                finally:
-                    doc_out.close()
-                    doc_in.close()
-                    gc.collect()
-
-        # แสดงตัวอย่างแผ่นสรุป 4 แผ่นให้ตรวจทานได้บนเว็บทันที
+        # แสดงตัวอย่างแผ่นสรุป 4 แผ่นให้ตรวจทานหรือแก้ไขได้บนเว็บ
         if st.session_state.generated_summary_sheets:
-            with st.expander("📋 เปิดดู/ตรวจสอบเนื้อหา One-Sheet Summary ทั้ง 4 แผ่น"):
+            with st.expander("📋 เปิดดูเนื้อหาสรุป One-Sheet Summary ทั้ง 4 แผ่นที่จะแนบท้ายไฟล์ PDF"):
                 tabs = st.tabs(["แผ่น 1: Overview", "แผ่น 2: Patho & อาการ", "แผ่น 3: Diagnosis & DDx", "แผ่น 4: Management"])
                 for idx_t, tab in enumerate(tabs, start=1):
                     with tab:
                         st.markdown(st.session_state.generated_summary_sheets.get(idx_t, "ยังไม่มีข้อมูล"))
 
         if st.session_state.compiled_pdf_bytes:
-            st.success(f"🎉 ประกอบไฟล์ PDF สำเร็จ! ขนาดไฟล์พร้อมดาวน์โหลด: **{st.session_state.compiled_pdf_size_mb:.2f} MB**")
+            sheet_msg = "พร้อมสรุป 4 แผ่นท้ายเล่ม" if include_4_sheets else "เฉพาะสไลด์โน้ต"
+            st.success(f"🎉 ประกอบและบีบอัดไฟล์ PDF สำเร็จ ({sheet_msg})! ขนาดไฟล์เหลือเพียง: **{st.session_state.compiled_pdf_size_mb:.2f} MB**")
             st.download_button(
                 label=f"💾 คลิกดาวน์โหลดไฟล์ PDF ฉบับสมบูรณ์ ({st.session_state.compiled_pdf_size_mb:.2f} MB)",
                 data=st.session_state.compiled_pdf_bytes,
@@ -1009,7 +1091,7 @@ if st.session_state.pdf_bytes:
         }
 
         # ==========================================
-        # PHASE 1: GLOBAL SCAN (รองรับโหมดความเร็วสูง 0.1 วินาทีสำหรับ 100+ หน้า)
+        # PHASE 1: GLOBAL SCAN
         # ==========================================
         if st.session_state.phase == 'global_scan':
             if st.session_state.fast_index_mode:
@@ -1057,7 +1139,7 @@ if st.session_state.pdf_bytes:
                     st.rerun()
 
         # ==========================================
-        # PHASE 2: DETAIL SCAN (ลงรายละเอียดทีละหน้าแบบ Visual-First)
+        # PHASE 2: DETAIL SCAN
         # ==========================================
         elif st.session_state.phase == 'detail_scan':
             target = None
@@ -1104,8 +1186,8 @@ if st.session_state.pdf_bytes:
                 if want_summary:
                     pattern_parts.append(
                         "High-Yield:\n"
-                        "- KEY1: **(คำสำคัญ/จุดออกสอบที่ 1)** (สรุปสั้นคมใน 1 บรรทัด พร้อมเหตุผลสั้นๆ)\n"
-                        "- KEY2: **(คำสำคัญ/จุดออกสอบที่ 2)** (สรุปสั้นคมใน 1 บรรทัด ถ้ามีประเด็นสำคัญอีกสามารถเพิ่ม KEY3 ได้ตามความเหมาะสม)"
+                        "- KEY1: **(คำสำคัญ/จุดออกสอบที่ 1)** (อธิบายให้ชัดเจน กระชับ อ่านเข้าใจง่ายและจำได้ทันที พร้อมเหตุผลสั้นๆ **เพราะ...**)\n"
+                        "- KEY2: **(คำสำคัญ/จุดออกสอบที่ 2)** (อธิบายให้ชัดเจน กระชับ อ่านเข้าใจง่ายและจำได้ทันที ถ้ามีประเด็นสำคัญอีกสามารถเพิ่ม KEY3, KEY4 ได้ตามความเหมาะสม)"
                     )
 
                 if want_quiz:
@@ -1171,4 +1253,4 @@ if st.session_state.pdf_bytes:
                 st.session_state.phase = 'idle'
                 rebuild_full_summaries()
                 save_workspace()
-                action_placeholder.markdown("<div class='status-blue' style='border-left-color: #38A169; color: #2F855A; background: #F0FFF4;'><b>✅ ประมวลผลครบทุกหน้าที่เลือกแล้ว!</b><br>สามารถเปิดอ่านแบบ Active Recall หรือกดประกอบไฟล์ PDF ด้านล่างได้เลยครับ</div>", unsafe_allow_html=True)
+                action_placeholder.markdown("<div class='status-blue' style='border-left-color: #38A169; color: #2F855A; background: #F0FFF4;'><b>✅ ประมวลผลครบทุกหน้าที่เลือกแล้ว!</b><br>กดปุ่มรวบรวมและประกอบไฟล์ PDF ด้านล่างเพื่อรับไฟล์พร้อมสรุป 4 แผ่นท้ายเล่มได้เลยครับ</div>", unsafe_allow_html=True)
