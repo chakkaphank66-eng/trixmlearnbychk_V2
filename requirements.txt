@@ -3,3 +3,10 @@ PyMuPDF
 google-generativeai
 Pillow
 markdown
+streamlit>=1.38.0
+pymupdf>=1.24.0
+google-genai>=1.0.0
+pillow>=10.0.0
+requests>=2.31.0
+markdown>=3.6
+ddgs>=6.0.0
