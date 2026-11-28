@@ -32,10 +32,11 @@ keys_to_init = {
     'status_mode': 'blue',
     'user_api_key': "",
 
-    # ระบบบริบทข้ามหน้า (Sliding Context)
+    # ระบบบริบท ±5 หน้า (Grounded Continuity)
     'phase': 'idle',  # idle, global_scan, detail_scan
     'global_data': {},
-    'fast_index_mode': True,
+    'ai_peek_image_pages': True,  # ส่อง AI เฉพาะสไลด์ภาพล้วนใน Phase 1 เพื่อกันมั่วบริบท
+    'context_window': 5,
 
     # การเลือกหน้าและโหมดฝึกคิด
     'customizer_page': 0,
@@ -57,7 +58,7 @@ for k, v in keys_to_init.items():
 
 st.set_page_config(page_title="Smart Study Buddy 🩺", layout="wide")
 
-# --- 2. Custom CSS (Clean, Compact & High-Contrast) ---
+# --- 2. Custom CSS ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap');
@@ -92,10 +93,7 @@ st.markdown("""
         margin-bottom: 10px;
         font-size: 1.02em;
     }
-    .hy-body {
-        padding: 2px 4px 10px 4px;
-        margin-bottom: 12px;
-    }
+    .hy-body { padding: 2px 4px 10px 4px; margin-bottom: 12px; }
     .hy-body p { margin-bottom: 8px; }
     .hy-body ul { margin: 4px 0 8px 0; padding-left: 1.3rem; }
     .hy-body li { margin-bottom: 5px; }
@@ -117,17 +115,8 @@ st.markdown("""
         padding: 10px 14px;
         margin-bottom: 9px;
     }
-    .qa-q {
-        color: #1D4ED8;
-        font-weight: 700;
-        margin-bottom: 4px;
-        line-height: 1.5;
-    }
-    .qa-a {
-        color: #1E293B;
-        line-height: 1.58;
-        padding-left: 4px;
-    }
+    .qa-q { color: #1D4ED8; font-weight: 700; margin-bottom: 4px; line-height: 1.5; }
+    .qa-a { color: #1E293B; line-height: 1.58; padding-left: 4px; }
 
     details.qa-toggle {
         margin-top: 4px;
@@ -137,12 +126,7 @@ st.markdown("""
         padding: 5px 10px;
         cursor: pointer;
     }
-    details.qa-toggle summary {
-        font-weight: 700;
-        color: #15803D;
-        font-size: 0.92em;
-        outline: none;
-    }
+    details.qa-toggle summary { font-weight: 700; color: #15803D; font-size: 0.92em; outline: none; }
 
     .status-blue { background: #EBF8FF; border-left: 5px solid #3182CE; color: #2B6CB0; padding: 12px 14px; border-radius: 10px; margin-bottom: 14px;}
     .status-yellow { background: #FFFFF0; border-left: 5px solid #D69E2E; color: #B7791F; padding: 12px 14px; border-radius: 10px; margin-bottom: 14px;}
@@ -152,8 +136,8 @@ st.markdown("""
 
 # --- 3. ฟังก์ชันจัดการไฟล์ Auto-Save และยูทิลิตี้ ---
 
-WORKSPACE_META_FILE = "autosave_v12_meta.pkl"
-WORKSPACE_PDF_FILE = "autosave_v12_source.pdf"
+WORKSPACE_META_FILE = "autosave_v13_meta.pkl"
+WORKSPACE_PDF_FILE = "autosave_v13_source.pdf"
 
 def save_workspace(save_pdf_binary=False):
     if save_pdf_binary and st.session_state.pdf_bytes:
@@ -176,6 +160,8 @@ def save_workspace(save_pdf_binary=False):
         'user_api_key': st.session_state.user_api_key,
         'custom_prompt_text': st.session_state.custom_prompt_text,
         'use_custom_prompt': st.session_state.use_custom_prompt,
+        'ai_peek_image_pages': st.session_state.ai_peek_image_pages,
+        'context_window': st.session_state.context_window,
     }
     try:
         with open(WORKSPACE_META_FILE, "wb") as f:
@@ -214,37 +200,6 @@ def render_page_png(pdf_bytes, page_number, dpi=115):
     finally:
         doc.close()
 
-def build_local_sliding_context(target_idx, window=2):
-    lines = []
-    sorted_pages = sorted(st.session_state.selected_pages)
-    if target_idx in sorted_pages:
-        pos = sorted_pages.index(target_idx)
-        near_pages = sorted_pages[max(0, pos - window):min(len(sorted_pages), pos + window + 1)]
-    else:
-        near_pages = [p for p in sorted_pages if abs(p - target_idx) <= window]
-
-    for idx in near_pages:
-        g_info = st.session_state.global_data.get(idx, {})
-        topic = g_info.get('topic', f"หน้า {idx+1}")
-        summary = g_info.get('summary', "")
-        marker = "👉 [หน้าปัจจุบัน]" if idx == target_idx else f"หน้า {idx+1}"
-        lines.append(f"- {marker} ({topic}): {summary}")
-    return "\n".join(lines) if lines else "ไม่มีข้อมูลบริบทข้างเคียง"
-
-def get_best_available_model(models_list):
-    current_time = time.time()
-    st.session_state.exhausted_models = {k: v for k, v in st.session_state.exhausted_models.items() if v > current_time}
-    preferred = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"]
-    if not models_list:
-        return "gemini-2.5-flash"
-    sorted_models = sorted(models_list, key=lambda x: next((i for i, p in enumerate(preferred) if p in x), 99))
-    for m in sorted_models:
-        if m not in st.session_state.exhausted_models:
-            return m
-    return sorted_models[0]
-
-# --- 4. ฟังก์ชันแยกส่วน High-Yield / เด็กช่างสงสัย และจัดรูปแบบ HTML/PDF ---
-
 def split_hy_qa(raw_text):
     """แยกข้อความออกเป็น 2 ส่วน: (high_yield_text, curious_qa_text)"""
     if not raw_text:
@@ -253,7 +208,6 @@ def split_hy_qa(raw_text):
     text = raw_text.strip()
     hy_text, qa_text = "", ""
 
-    # รองรับทั้งแท็ก [HIGH-YIELD] / [CURIOUS-QA] และรูปแบบหัวข้อสำรองกรณีโมเดลเขียนเพี้ยนเล็กน้อย
     qa_pattern = re.compile(
         r'(?:^|\n)\s*(?:#{1,3}\s*|\*\*)?(?:\[CURIOUS-QA\]|CURIOUS-QA:|เด็กช่างสงสัย:?)(?:\*\*)?\s*',
         flags=re.IGNORECASE
@@ -273,6 +227,72 @@ def split_hy_qa(raw_text):
 
     return hy_text, qa_text
 
+def _clean_oneline(txt, max_len=240):
+    clean = re.sub(r'\*\*|__|#+', '', txt)
+    clean = re.sub(r'\s+', ' ', clean).strip()
+    return (clean[:max_len] + "…") if len(clean) > max_len else clean
+
+def build_grounded_context(target_idx, window=5):
+    """
+    สร้างบริบทที่ยึดตามความจริง 100% ย้อนหลัง `window` หน้า และล่วงหน้า `window` หน้า
+    - หน้าก่อนหน้า: ดึงจาก High-Yield ที่ประมวลผลจริงก่อน (แม่นสุดแม้เป็นสไลด์ภาพ) ถ้าไม่มีจึงใช้ global_data
+    - หน้าถัดไป: ดึงจาก global_data (ข้อความจริงจาก PDF หรือ AI peek) เพื่อรู้ทิศทางล่วงหน้า
+    - ถ้าหน้าไหนไม่มีข้อมูลจริง จะระบุชัดว่า [ไม่มีข้อมูลข้อความ — ห้ามเดา]
+    """
+    sorted_pages = sorted(st.session_state.selected_pages)
+    if target_idx in sorted_pages:
+        pos = sorted_pages.index(target_idx)
+        prev_pages = sorted_pages[max(0, pos - window):pos]
+        next_pages = sorted_pages[pos + 1:min(len(sorted_pages), pos + 1 + window)]
+    else:
+        prev_pages = [p for p in sorted_pages if target_idx - window <= p < target_idx][-window:]
+        next_pages = [p for p in sorted_pages if target_idx < p <= target_idx + window][:window]
+
+    def describe_page(idx, prefer_processed=True):
+        if prefer_processed and idx in st.session_state.processed_data:
+            raw_p = st.session_state.processed_data[idx].get("user_text") or st.session_state.processed_data[idx].get("ai_text", "")
+            if raw_p and "⚠️" not in raw_p:
+                hy_p, _ = split_hy_qa(raw_p)
+                if hy_p.strip():
+                    return f"หน้า {idx+1} [สรุปจริง]: {_clean_oneline(hy_p, 250)}"
+            elif raw_p == "":
+                return f"หน้า {idx+1}: [หน้าว่าง/หน้าปก ไม่มีเนื้อหา]"
+
+        g = st.session_state.global_data.get(idx, {})
+        topic = g.get('topic', '').strip()
+        summary = g.get('summary', '').strip()
+        if summary and "ไม่มีข้อมูลข้อความ" not in summary:
+            label = f"{topic} — {summary}" if topic and topic not in summary else (summary or topic)
+            return f"หน้า {idx+1}: {_clean_oneline(label, 220)}"
+        return f"หน้า {idx+1}: [ไม่มีข้อมูลข้อความในหน้านี้ — ห้ามเดาหรืออ้างอิง]"
+
+    past_lines = [f"- {describe_page(idx, prefer_processed=True)}" for idx in prev_pages]
+    future_lines = [f"- {describe_page(idx, prefer_processed=True)}" for idx in next_pages]
+
+    past_block = "\n".join(past_lines) if past_lines else "- (ไม่มี — หน้านี้คือหน้าแรกของชุดสไลด์)"
+    future_block = "\n".join(future_lines) if future_lines else "- (ไม่มี — หน้านี้คือหน้าสุดท้ายของชุดสไลด์)"
+
+    return (
+        f"### 1) บริบทจริง {len(prev_pages)} หน้าก่อนหน้า (อ้างอิงได้เฉพาะสิ่งที่มีเขียนจริงข้างล่างนี้เท่านั้น):\n"
+        f"{past_block}\n\n"
+        f"### 2) แผนที่เนื้อหาจริง {len(next_pages)} หน้าถัดไป (ใช้ดูทิศทางล่วงหน้าเพื่อไม่เขียนซ้ำซ้อน ห้ามแต่งเติมเกินนี้):\n"
+        f"{future_block}"
+    )
+
+def get_best_available_model(models_list):
+    current_time = time.time()
+    st.session_state.exhausted_models = {k: v for k, v in st.session_state.exhausted_models.items() if v > current_time}
+    preferred = ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"]
+    if not models_list:
+        return "gemini-2.5-flash"
+    sorted_models = sorted(models_list, key=lambda x: next((i for i, p in enumerate(preferred) if p in x), 99))
+    for m in sorted_models:
+        if m not in st.session_state.exhausted_models:
+            return m
+    return sorted_models[0]
+
+# --- 4. ฟังก์ชันจัดรูปแบบ HTML / PDF และคำนวณฟอนต์ ---
+
 def style_bold_keywords(text, color="#BE123C"):
     return re.sub(
         r'\*\*(.*?)\*\*',
@@ -285,15 +305,12 @@ def format_hy_html(hy_text, for_pdf=False):
         return ""
     colored = style_bold_keywords(hy_text.strip(), color="#BE123C")
     body_html = markdown.markdown(colored, extensions=['tables'])
-    if for_pdf:
-        return f"<div class='hy-header'>⚡ High-Yield สาระสำคัญ &amp; จุดสังเกต</div><div class='hy-body'>{body_html}</div>"
     return f"<div class='hy-header'>⚡ High-Yield สาระสำคัญ &amp; จุดสังเกต</div><div class='hy-body'>{body_html}</div>"
 
 def format_qa_html(qa_text, for_pdf=False, hide_answers=False):
     if not qa_text.strip():
         return ""
 
-    # แยกคู่ Q: / A: อย่างยืดหยุ่น (รองรับ Q1:, Q:, **Q1:**)
     lines = qa_text.strip().split("\n")
     pairs = []
     curr_q, curr_a = [], []
@@ -328,7 +345,6 @@ def format_qa_html(qa_text, for_pdf=False, hide_answers=False):
 
     header = "<div class='qa-header'>🙋‍♂️ เด็กช่างสงสัย (ถามลึกเรียงตามความสำคัญ)</div>"
 
-    # Fallback หากข้อความไม่ได้มาในรูปแบบ Q/A
     if not pairs:
         colored = style_bold_keywords(qa_text.strip(), color="#B91C1C")
         return f"{header}<div class='qa-body'>{markdown.markdown(colored, extensions=['tables'])}</div>"
@@ -339,7 +355,6 @@ def format_qa_html(qa_text, for_pdf=False, hide_answers=False):
         a_clean = style_bold_keywords(a_txt, color="#B91C1C")
 
         if for_pdf:
-            # โหมด PDF กระชับสูงสุดเพื่อประหยัดพื้นที่กระดาษ
             item = (
                 f"<div class='qa-item'>"
                 f"<div class='qa-q'>Q{idx}: {q_clean}</div>"
@@ -367,11 +382,6 @@ def format_qa_html(qa_text, for_pdf=False, hide_answers=False):
     return header + "".join(items_html)
 
 def calc_optimal_fontsize(html_text, rect_width, rect_height, mode="combined"):
-    """
-    คำนวณขนาดฟอนต์อัจฉริยะด้วยการจำลองการตัดบรรทัดภาษาไทยจริง
-    - ไม่นับสระลอย/วรรณยุกต์ในความกว้างแนวนอน
-    - mode: 'hy' (ฟอนต์ใหญ่ชัดเจน), 'qa' (กระชับคุ้มพื้นที่), 'combined' (สมดุล)
-    """
     if not html_text or rect_width <= 0 or rect_height <= 0:
         return 18
 
@@ -395,10 +405,8 @@ def calc_optimal_fontsize(html_text, rect_width, rect_height, mode="combined"):
     for f_size in range(max_f, min_f - 1, -1):
         usable_w = max(40.0, rect_width - 18.0)
         chars_per_line = max(8.0, usable_w / (f_size * char_w))
-
         total_lines = sum(math.ceil(length / chars_per_line) for length in eff_lengths)
         est_height = (total_lines + num_blocks * blk_gap) * (f_size * line_h)
-
         if est_height <= rect_height * fill_ratio:
             return f_size
 
@@ -430,7 +438,7 @@ def render_layout_preview(hy_pos, qa_pos, want_hy, want_qa):
     )
     st.markdown(html_str, unsafe_allow_html=True)
 
-# --- 5. Sidebar: ตั้งค่าทั้งหมดแบบกระชับตรงประเด็น ---
+# --- 5. Sidebar ---
 with st.sidebar:
     st.markdown("<h2 style='color: #0F172A; margin-bottom: 0.2rem;'>🩺 Study Buddy Settings</h2>", unsafe_allow_html=True)
     is_locked = st.session_state.is_running
@@ -471,22 +479,36 @@ with st.sidebar:
     st.caption(f"💳 Token ที่ใช้ไป (ประมาณการ): **{st.session_state.estimated_tokens_used:,}**")
     st.divider()
 
-    # ตั้งค่าเนื้อหา 2 แกนหลัก
     med_year = st.selectbox("ระดับชั้น นสพ.", [2, 3, 4, 5, 6], index=2, disabled=is_locked)
-    want_hy = st.checkbox("⚡ High-Yield (เกริ่นเชื่อม + สาระสำคัญ + จุดระวัง)", value=True, disabled=is_locked)
+    want_hy = st.checkbox("⚡ High-Yield (สาระสำคัญ + จุดสังเกต)", value=True, disabled=is_locked)
     want_qa = st.checkbox("🙋‍♂️ ระบบเด็กช่างสงสัย (Q:/A: เชิงเหตุผล)", value=True, disabled=is_locked)
 
     qa_min, qa_max = 2, 4
     if want_qa:
         qa_min, qa_max = st.slider(
             "จำนวนคำถามเด็กช่างสงสัย (ขั้นต่ำ - สูงสุด):",
-            min_value=1, max_value=7, value=(2, 4), disabled=is_locked,
-            help="AI จะปรับจำนวนข้อตามความแน่นของเนื้อหาจริงในหน้านั้น เพื่อไม่ให้สร้างคำถามขยะ"
+            min_value=1, max_value=7, value=(2, 4), disabled=is_locked
         )
 
     st.divider()
 
-    # ตั้งค่าตำแหน่งวางบนกระดาษ PDF
+    # ตั้งค่าระบบร้อยเรียงบริบท ±5 หน้า
+    st.markdown("### 🔗 ระบบร้อยเรียงเนื้อหาข้ามหน้า")
+    st.session_state.context_window = st.slider(
+        "ช่วงมองบริบทก่อนหน้า–ถัดไป (หน้า):",
+        min_value=2, max_value=8, value=st.session_state.context_window, disabled=is_locked,
+        help="ค่าเริ่มต้น 5 หน้า = รู้จริงทั้ง 5 หน้าก่อนหน้าและ 5 หน้าถัดไป"
+    )
+    st.session_state.ai_peek_image_pages = st.checkbox(
+        "👁️ สแกน AI เฉพาะสไลด์ภาพล้วนใน Phase 1",
+        value=st.session_state.ai_peek_image_pages,
+        disabled=is_locked,
+        help="หน้าที่มีตัวอักษรจะสแกนทันที (0 Token) แต่ถ้าเจอหน้าภาพล้วนจะให้ AI ส่องสั้นๆ เพื่อไม่ให้มั่วบริบท 5 หน้าถัดไป"
+    )
+
+    st.divider()
+
+    # ตั้งค่าตำแหน่ง PDF
     st.markdown("### 📐 จัดตำแหน่งบนกระดาษ (PDF Layout)")
     pos_options = ["ด้านบน", "ด้านล่าง", "ด้านซ้าย", "ด้านขวา"]
     hy_pos = st.selectbox("วาง [⚡ High-Yield] ไว้ที่:", pos_options, index=1, disabled=is_locked or not want_hy)
@@ -497,27 +519,25 @@ with st.sidebar:
     render_layout_preview(hy_pos, qa_pos, want_hy, want_qa)
 
     st.divider()
-
-    # ตั้งค่าความเร็ว & Prompt
-    st.session_state.fast_index_mode = st.checkbox(
-        "⚡ สแกนบริบทความเร็วสูง (Instant Index 0.1 วิ)",
-        value=st.session_state.fast_index_mode,
-        disabled=is_locked
-    )
     max_tokens = st.number_input("Max Output Tokens", min_value=500, max_value=8192, value=2500, step=250, disabled=is_locked)
 
-    base_prompt_template = f"""คุณคือติวเตอร์แพทย์ที่สรุปเก่งที่สุด และเป็นเพื่อนร่วมเรียนระดับหัวกะทิที่นั่งเรียนข้าง นสพ. ปี {med_year}
-เป้าหมายสูงสุด: ตัดน้ำท่วมทุ่งทิ้งทั้งหมด เหลือเฉพาะสิ่งที่อ่านแล้ว **"เข้าใจความเชื่อมโยง จับจุดเน้นได้ทันที และได้มุมมองเชิงเหตุผลที่คนอ่านมักมองข้าม"**
+    base_prompt_template = f"""คุณคือติวเตอร์แพทย์ที่สรุปคมที่สุด และเพื่อนร่วมเรียนหัวกะทิที่นั่งเรียนข้าง นสพ. ปี {med_year}
+เป้าหมาย: ตัดน้ำทิ้งทั้งหมด เหลือเฉพาะสิ่งที่อ่านแล้ว **"ลื่นไหล เข้าใจแก่นทันที ไม่สะดุด และได้มุมมองเชิงเหตุผลที่คนอ่านมักมองข้าม"**
 
-**บริบทหน้าใกล้เคียง (Sliding Context เพื่อให้เชื่อมเรื่องได้ลื่นไหล):**
+**ข้อมูลบริบทจริงรอบข้าง (ยึดตามความจริง 100% เท่านั้น):**
 {{global_context}}
 
-**กฎเหล็กสำคัญ:**
-1. ห้ามทักทาย ห้ามเกริ่นนอกเรื่อง เริ่มต้นด้วยแท็กที่กำหนดทันที
-2. **เน้นตัวหนา (`**คำสำคัญ**`)** ที่คำสำคัญ กลไกหลัก หรือจุดตัดสำคัญ เพื่อให้กวาดสายตาแล้วจับใจความได้ทันทีและไม่พลาดคำสำคัญ
-3. ศัพท์แพทย์หรือตัวย่อที่สำคัญ ให้ใส่วงเล็บคำเต็มหรือภาษาอังกฤษเมื่อปรากฏครั้งแรก
-4. **ถ้าสไลด์เป็นหน้าปก หน้าว่าง หรือไม่มีเนื้อหาการแพทย์เลย** ให้ตอบเพียงคำเดียวว่า `NON_CONTENT`
-5. **ถ้าสไลด์เป็นโจทย์ข้อสอบ** ให้ใช้ส่วน `[HIGH-YIELD]` สรุปจับ Keyword โจทย์ ➡️ คำตอบที่ถูกและเหตุผล และใช้ `[CURIOUS-QA]` ถามเจาะเหตุผลว่าทำไมตัวลวงอื่นถึงผิดหรือเปลี่ยนเงื่อนไขโจทย์แล้วคำตอบเปลี่ยนไหม
+**กฎเหล็กเรื่องความถูกต้องและการร้อยเรียง (ห้ามละเมิดเด็ดขาด):**
+1. **ห้ามมั่วบริบทเด็ดขาด (Zero Hallucination):** อ้างอิงเนื้อหาหน้าก่อนหน้าหรือหน้าถัดไปได้ **เฉพาะสิ่งที่ปรากฏเป็นลายลักษณ์อักษรในข้อมูลบริบทข้างต้นเท่านั้น** หากไม่พบคำ/หัวข้อนั้นในบริบท หรือระบุว่า `[ไม่มีข้อมูลข้อความ]` ห้ามแต่งเติมหรือเดาเองโดยเด็ดขาด (เช่น ห้ามพูดว่า "จากอนาโตมี่หน้าที่แล้ว..." ถ้า 5 หน้าก่อนหน้าไม่ได้พูดถึงอนาโตมี่จริง)
+2. **ห้ามฝืนเกริ่นให้เสียเวลาอ่าน (No Forced Transitions):**
+   - **ห้ามใช้ประโยคซ้ำซาก/หุ่นยนต์** เช่น "จากเรื่อง...ที่เรียนไปในหน้าที่แล้ว หน้านี้จะอธิบายถึง..." หรือ "ต่อเนื่องจากสไลด์ก่อนหน้า..."
+   - ถ้าหน้านี้ **ขึ้นประเด็นใหม่ หรือจบความในตัวเองได้** ให้ **เข้าแก่นเนื้อหาทันที** ไม่ต้องย้อนความให้เสียเวลา
+   - ถ้าหน้านี้ **ต่อยอดเชิงเหตุ-ผลตรงๆ** จากหน้าก่อนหน้า ให้ร้อยเข้าประโยคอย่างเป็นธรรมชาติด้วยคำเชื่อมเชิงเนื้อหา (เช่น *"เมื่อเกิดภาวะนี้แล้ว ขั้นตอนถัดไปคือ..."* หรือ *"จากกลไกดังกล่าว จึงทำให้ตรวจพบ..."*) โดยไม่ต้องเอ่ยคำว่า "หน้าที่แล้ว/สไลด์ก่อนหน้า" พร่ำเพรื่อ
+   - ใช้ข้อมูล **5 หน้าถัดไป** เพื่อรู้ขอบเขต (รู้ว่าเรื่องไหนเดี๋ยวหน้าถัดไปจะลงลึกอยู่แล้ว หน้านี้จะได้ไม่เขียนซ้ำซ้อนล่วงหน้า)
+3. **เน้นตัวหนา (`**คำสำคัญ**`)** ที่คำสำคัญ กลไกหลัก และจุดตัดสำคัญเสมอ เพื่อให้กวาดสายตาแล้วจับใจความได้ทันทีและจำได้นาน
+4. ศัพท์แพทย์หรือตัวย่อสำคัญ ให้ใส่วงเล็บคำเต็มหรือภาษาอังกฤษเมื่อปรากฏครั้งแรก
+5. **ถ้าสไลด์เป็นหน้าปก หน้าว่าง หรือไม่มีเนื้อหาการแพทย์เลย** ให้ตอบเพียงคำเดียวว่า `NON_CONTENT`
+6. **ถ้าสไลด์เป็นโจทย์ข้อสอบ** ให้ใช้ `[HIGH-YIELD]` สรุป Keyword โจทย์ ➡️ คำตอบที่ถูกพร้อมเหตุผล และใช้ `[CURIOUS-QA]` เจาะเหตุผลว่าทำไมตัวลวงอื่นผิดหรือถ้าเปลี่ยนเงื่อนไขโจทย์คำตอบจะเปลี่ยนอย่างไร
 
 {{section_instructions}}"""
 
@@ -526,7 +546,7 @@ with st.sidebar:
         st.session_state.custom_prompt_text = st.text_area(
             "ปรับแต่ง Prompt (ห้ามลบ {global_context} และ {section_instructions})",
             value=st.session_state.custom_prompt_text or base_prompt_template,
-            height=240,
+            height=260,
             disabled=is_locked
         )
     else:
@@ -536,7 +556,8 @@ with st.sidebar:
     current_settings = {
         "year": med_year, "want_hy": want_hy, "want_qa": want_qa,
         "qa_range": (qa_min, qa_max), "hy_pos": hy_pos, "qa_pos": qa_pos,
-        "m_side": margin_side_pct, "m_vert": margin_vert_pct, "max_tok": max_tokens
+        "m_side": margin_side_pct, "m_vert": margin_vert_pct, "max_tok": max_tokens,
+        "ctx_win": st.session_state.context_window
     }
     if not is_locked and st.session_state.last_settings and current_settings != st.session_state.last_settings:
         st.session_state.settings_changed_alert = True
@@ -661,14 +682,18 @@ if st.session_state.pdf_bytes and not is_locked:
 # --- 8. แผงควบคุมการรัน & E-Book Reader ---
 if st.session_state.pdf_bytes:
     if st.session_state.settings_changed_alert and not st.session_state.is_running:
-        st.warning("🔔 มีการเปลี่ยนการตั้งค่า: หน้าถัดไปที่รันจะใช้รูปแบบใหม่ (ส่วนตำแหน่ง PDF ปรับเปลี่ยนตอนกดประกอบไฟล์ได้ทันที)")
+        st.warning("🔔 มีการเปลี่ยนการตั้งค่า: หน้าถัดไปที่รันจะใช้รูปแบบใหม่ (ตำแหน่ง PDF ปรับเปลี่ยนตอนกดประกอบไฟล์ได้ทันที)")
         if st.button("รับทราบ"):
             st.session_state.settings_changed_alert = False
             st.rerun()
 
     if st.session_state.show_start_popup:
         pages_to_do = len([i for i in st.session_state.selected_pages if i not in st.session_state.processed_data])
-        st.info(f"📊 เตรียมประมวลผลเพิ่ม **{pages_to_do} หน้า** | คำถามช่างสงสัย: **{qa_min}–{qa_max} ข้อ/หน้า** | คาดการณ์ ~**{pages_to_do * 900:,} Tokens**")
+        st.info(
+            f"📊 เตรียมประมวลผลเพิ่ม **{pages_to_do} หน้า** | "
+            f"บริบทเชื่อมโยง: **±{st.session_state.context_window} หน้าจริง** | "
+            f"คำถามช่างสงสัย: **{qa_min}–{qa_max} ข้อ/หน้า**"
+        )
         c_s1, c_s2 = st.columns(2)
         if c_s1.button("✅ ยืนยันเริ่มรัน", type="primary", use_container_width=True):
             if not api_key:
@@ -729,6 +754,9 @@ if st.session_state.pdf_bytes:
 
     with col_v1:
         st.image(render_page_png(st.session_state.pdf_bytes, curr, dpi=120), use_container_width=True, caption=f"สไลด์หน้า {curr + 1}")
+        if st.session_state.global_data:
+            with st.expander(f"🔗 ตรวจสอบบริบทจริง ±{st.session_state.context_window} หน้าที่ระบบส่งให้ AI หน้านี้"):
+                st.markdown(build_grounded_context(curr, window=st.session_state.context_window))
 
     with col_v2:
         if curr in st.session_state.processed_data:
@@ -834,7 +862,6 @@ if st.session_state.pdf_bytes:
                     slide_rect = fitz.Rect(pad_left, pad_top, pad_left + w, pad_top + h)
                     p_out.show_pdf_page(slide_rect, doc_in, i)
 
-                    # คำนวณกรอบพื้นที่ 4 ด้าน (ซ้าย/ขวาเต็มความสูง, บน/ล่างกว้างพอดีสไลด์)
                     rects = {
                         "ด้านขวา": fitz.Rect(pad_left + w + 10, 10, new_w - 10, new_h - 10) if pad_right > 25 else None,
                         "ด้านซ้าย": fitz.Rect(10, 10, pad_left - 10, new_h - 10) if pad_left > 25 else None,
@@ -929,7 +956,7 @@ if st.session_state.pdf_bytes:
                 use_container_width=True
             )
 
-    # --- 10. ระบบประมวลผลหลังบ้าน (2-Phase Processor) ---
+    # --- 10. ระบบประมวลผลหลังบ้าน (Hybrid Grounded 2-Phase Processor) ---
     if st.session_state.is_running and not st.session_state.stop_clicked:
         active_m = st.session_state.current_active_model or get_best_available_model(st.session_state.flash_models_list)
         model = genai.GenerativeModel(active_m)
@@ -941,52 +968,88 @@ if st.session_state.pdf_bytes:
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE
         }
 
-        # PHASE 1: GLOBAL INDEX
+        # ==========================================
+        # PHASE 1: HYBRID GROUNDED INDEX (Text Instant + AI Peek เฉพาะหน้าภาพล้วน)
+        # ==========================================
         if st.session_state.phase == 'global_scan':
-            if st.session_state.fast_index_mode:
-                action_placeholder.markdown("<div class='status-purple'><b>⚡ [Phase 1/2] กำลังดึงโครงสร้างบริบทสไลด์ (Instant Index)...</b></div>", unsafe_allow_html=True)
-                doc_idx = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
-                try:
-                    for idx in st.session_state.selected_pages:
-                        if idx not in st.session_state.global_data:
-                            raw_t = doc_idx[idx].get_text("text").strip()
-                            lines = [ln.strip() for ln in raw_t.split("\n") if ln.strip()]
-                            topic = lines[0][:45] if lines else f"สไลด์หน้า {idx+1}"
-                            summary = " ".join(lines[1:4])[:140] if len(lines) > 1 else "สไลด์ภาพ/กราฟิก"
-                            st.session_state.global_data[idx] = {'topic': topic, 'summary': summary}
-                finally:
-                    doc_idx.close()
+            doc_idx = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
+            need_rerun_for_peek = False
+            try:
+                for idx in st.session_state.selected_pages:
+                    if idx in st.session_state.global_data:
+                        continue
+
+                    raw_t = doc_idx[idx].get_text("text").strip()
+                    lines = [ln.strip() for ln in raw_t.split("\n") if ln.strip()]
+                    full_clean_text = " ".join(lines)
+
+                    # ถ้ามีข้อความจริงเพียงพอ -> ดึงทันที 0 Token
+                    if len(full_clean_text) >= 25:
+                        topic = lines[0][:55]
+                        summary = full_clean_text[:240]
+                        st.session_state.global_data[idx] = {'topic': topic, 'summary': summary}
+                    else:
+                        # หน้าภาพล้วน/สแกนที่ไม่มีตัวอักษร
+                        if st.session_state.ai_peek_image_pages:
+                            action_placeholder.markdown(
+                                f"<div class='status-purple'><b>👁️ [Phase 1/2] พบหน้าภาพล้วน (หน้า {idx+1}/{total_pages}) — กำลังสแกนหัวข้อสั้นๆ เพื่อทำแผนที่บริบท 5 หน้า...</b></div>",
+                                unsafe_allow_html=True
+                            )
+                            img_peek = Image.open(io.BytesIO(doc_idx[idx].get_pixmap(dpi=55).tobytes("png")))
+                            try:
+                                resp_p = model.generate_content(
+                                    [
+                                        "ดูสไลด์ภาพนี้แล้วสรุปสั้นมากเพื่อทำสารบัญ (ห้ามแต่งเพิ่มจากภาพ):\n"
+                                        "TOPIC: (ชื่อหัวข้อ 2-5 คำ ถ้าเป็นหน้าว่าง/หน้าปกตอบ 'หน้าปก/ว่าง')\n"
+                                        "SUMMARY: (ใจความหลัก 1 ประโยคสั้นๆ ไม่เกิน 25 คำ)",
+                                        img_peek
+                                    ],
+                                    safety_settings=safety,
+                                    generation_config=GenerationConfig(max_output_tokens=90)
+                                )
+                                txt_p = resp_p.text.strip()
+                                st.session_state.estimated_tokens_used += len(txt_p)
+                                if "TOPIC:" in txt_p and "SUMMARY:" in txt_p:
+                                    topic = txt_p.split("TOPIC:")[1].split("SUMMARY:")[0].strip()
+                                    summary = txt_p.split("SUMMARY:")[1].strip()
+                                else:
+                                    topic = f"หน้า {idx+1}"
+                                    summary = _clean_oneline(txt_p, 180)
+                                st.session_state.global_data[idx] = {'topic': topic, 'summary': summary}
+                            except Exception as e:
+                                if "429" in str(e) or "Quota" in str(e):
+                                    st.session_state.exhausted_models[active_m] = time.time() + 60
+                                    new_m = get_best_available_model(st.session_state.flash_models_list)
+                                    if new_m and new_m != active_m:
+                                        st.session_state.current_active_model = new_m
+                                        time.sleep(1.0)
+                                        need_rerun_for_peek = True
+                                        break
+                                st.session_state.global_data[idx] = {
+                                    'topic': f"หน้า {idx+1}",
+                                    'summary': "[ไม่มีข้อมูลข้อความ — หน้าภาพล้วน]"
+                                }
+                            save_workspace()
+                            need_rerun_for_peek = True
+                            break
+                        else:
+                            st.session_state.global_data[idx] = {
+                                'topic': f"หน้า {idx+1}",
+                                'summary': "[ไม่มีข้อมูลข้อความ — หน้าภาพล้วน]"
+                            }
+            finally:
+                doc_idx.close()
+
+            if need_rerun_for_peek:
+                st.rerun()
+            else:
                 st.session_state.phase = 'detail_scan'
                 save_workspace()
                 st.rerun()
-            else:
-                target_g = next((i for i in st.session_state.selected_pages if i not in st.session_state.global_data), None)
-                if target_g is None:
-                    st.session_state.phase = 'detail_scan'
-                    save_workspace()
-                    st.rerun()
-                else:
-                    action_placeholder.markdown(f"<div class='status-purple'><b>🔍 [Phase 1/2] สแกนภาพรวมหน้า {target_g+1}/{total_pages}</b></div>", unsafe_allow_html=True)
-                    doc_g = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
-                    img = Image.open(io.BytesIO(doc_g[target_g].get_pixmap(dpi=50).tobytes("png")))
-                    doc_g.close()
-                    try:
-                        resp = model.generate_content(
-                            ["วิเคราะห์สไลด์นี้ ตอบสั้นๆ:\nTOPIC: (1-3 คำ)\nSUMMARY: (1 ประโยค)", img],
-                            safety_settings=safety,
-                            generation_config=GenerationConfig(max_output_tokens=100)
-                        )
-                        txt = resp.text.strip()
-                        st.session_state.estimated_tokens_used += len(txt)
-                        topic = txt.split("TOPIC:")[1].split("SUMMARY:")[0].strip() if "TOPIC:" in txt and "SUMMARY:" in txt else f"หน้า {target_g+1}"
-                        summary = txt.split("SUMMARY:")[1].strip() if "SUMMARY:" in txt else ""
-                        st.session_state.global_data[target_g] = {'topic': topic, 'summary': summary}
-                    except Exception:
-                        st.session_state.global_data[target_g] = {'topic': f"หน้า {target_g+1}", 'summary': ""}
-                    save_workspace()
-                    st.rerun()
 
-        # PHASE 2: HIGH-YIELD + CURIOUS STUDY BUDDY GENERATION
+        # ==========================================
+        # PHASE 2: HIGH-YIELD + CURIOUS STUDY BUDDY (Grounded ±5 Context)
+        # ==========================================
         elif st.session_state.phase == 'detail_scan':
             target = next(
                 (i for i in st.session_state.selected_pages if i in st.session_state.processed_data and "⚠️" in st.session_state.processed_data[i].get("ai_text", "")),
@@ -999,7 +1062,7 @@ if st.session_state.pdf_bytes:
             if target is not None:
                 done_cnt = len([k for k in st.session_state.selected_pages if k in st.session_state.processed_data and "⚠️" not in st.session_state.processed_data[k].get("ai_text", "")])
                 mode_cls = "yellow" if is_recheck else "blue"
-                msg = f"🔄 ซ่อมหน้าที่ Error (หน้า {target+1})" if is_recheck else f"⚡ กำลังสกัด High-Yield & เด็กช่างสงสัย หน้า {target+1} (เสร็จ {done_cnt}/{len(st.session_state.selected_pages)})"
+                msg = f"🔄 ซ่อมหน้าที่ Error (หน้า {target+1})" if is_recheck else f"⚡ กำลังสรุปหน้า {target+1} (เชื่อมบริบทจริง ±{st.session_state.context_window} หน้า | เสร็จ {done_cnt}/{len(st.session_state.selected_pages)})"
                 action_placeholder.markdown(f"<div class='status-{mode_cls}'><b>{msg}</b><br>🤖 โมเดล: <code>{active_m}</code></div>", unsafe_allow_html=True)
 
                 doc_d = fitz.open(stream=st.session_state.pdf_bytes, filetype="pdf")
@@ -1010,36 +1073,40 @@ if st.session_state.pdf_bytes:
                 if want_hy:
                     sections.append(
                         "[HIGH-YIELD]\n"
-                        "เขียนสรุปสไลด์หน้านี้ให้จบในที่เดียวแบบ **อ่านลื่น เป็นธรรมชาติ และไม่ใช้แพทเทิร์นประโยคซ้ำซากจำเจ** (ห้ามขึ้นต้นแบบหุ่นยนต์เดิมๆ ทุกหน้า เช่น ห้ามขึ้นว่า 'หน้านี้กล่าวถึง...' ซ้ำทุกสไลด์ ให้ปรับลีลาการเล่าเรื่องตามธรรมชาติของเนื้อหา เช่น เกริ่นต่อยอดจากบริบทหน้าก่อนหน้า, เปิดด้วยภาพใหญ่แล้วเจาะจุดเปลี่ยน, หรือชี้ตรงไปที่จุดโฟกัสบนภาพ/กราฟ/ตารางของสไลด์)\n"
-                        "- ต้องรวมครบ 3 มิติอย่างแนบเนียน: (1) เชื่อมโยงว่าหน้านี้กำลังพาไปเข้าใจเรื่องอะไร (2) **แก่นเนื้อหาสำคัญ + เหตุผล/กลไกเชื่อมโยง** (ใช้ลูกศร `➡️` ช่วยได้เมื่ออธิบายลำดับเหตุผล) และ (3) **จุดสังเกตหรือข้อควรระวัง** ที่มักสับสนหรือสำคัญหน้างานจริง\n"
-                        "- ความยาวกระชับพอดีกับเนื้อหาจริงบนสไลด์ (ประมาณ 1 ย่อหน้ากระชับ หรือ 2-4 บูลเล็ตสั้นๆ อ่านจบใน 15-20 วินาที) เน้น **ตัวหนา** ที่คำสำคัญเสมอ"
+                        "เขียนสรุปสไลด์หน้านี้ให้จบในที่เดียวแบบ **อ่านลื่น เป็นธรรมชาติ กระชับ และไม่ซ้ำแพทเทิร์น**:\n"
+                        "- **วิธีเปิดเรื่องให้ลื่น (สำคัญมาก):**\n"
+                        "  • ถ้าหน้านี้ **เป็นหัวข้อใหม่ หรือเข้าใจได้ในตัวมันเอง** ให้ **เข้าประเด็นสำคัญทันที** ห้ามเกริ่นย้อนถึงหน้าที่แล้วให้เสียเวลา\n"
+                        "  • ถ้าหน้านี้ **เป็นเหตุ-ผลต่อเนื่องตรงๆ** จากเรื่องที่มีอยู่จริงใน 5 หน้าก่อนหน้า ให้ร้อยต่ออย่างเนียนๆ ด้วยเหตุผลของเนื้อหาโดยตรง **ไม่ต้องใช้คำฟุ่มเฟือยว่า 'จากหน้าที่แล้วที่เราเรียนเรื่อง...'**\n"
+                        "  • ถ้าหน้านี้เป็น **สไลด์ปูทาง** ไปสู่เนื้อหาสำคัญใน 5 หน้าถัดไป ให้เน้นเฉพาะจุดที่ต้องใช้ต่อยอด และไม่ต้องเขียนซ้ำรายละเอียดที่หน้าถัดไปจะพูดอยู่แล้ว\n"
+                        "- **องค์ประกอบต้องครบ:** แก่นสำคัญของหน้านี้ + **เหตุผล/กลไกเชื่อมโยง** (ใช้ `➡️` ได้เมื่อไล่ลำดับเหตุผล) + **จุดสังเกตหรือข้อควรระวัง** ที่มักพลาดในข้อสอบหรือหน้างานจริง\n"
+                        "- ความยาวกระชับพอดีกับเนื้อหาจริง (ประมาณ 1 ย่อหน้า หรือ 2–4 บูลเล็ตสั้นๆ อ่านจบใน 15–20 วินาที) เน้น **ตัวหนา** ที่คำสำคัญเสมอ"
                     )
 
                 if want_qa:
                     sections.append(
                         f"[CURIOUS-QA]\n"
-                        f"สวมบทบาท **เพื่อนร่วมเรียนหัวกะทิช่างสงสัย** ที่นั่งข้างๆ แล้วคอยยกมือถามอาจารย์แทนผู้อ่านในจุดสำคัญที่คนอ่านมักมองข้ามหรือลืมเอะใจ\n"
-                        f"- สร้างจำนวน **{qa_min} ถึง {qa_max} ข้อ** (เลือกจำนวนตามความเข้มข้นของเนื้อหาจริงในสไลด์ ห้ามยัดเยียดคำถามให้ครบสูงสุดถ้าสไลด์มีประเด็นน้อย)\n"
-                        f"- **เรียงลำดับคำถามจากสำคัญที่สุด/ออกสอบบ่อยสุด/เปิดมุมมองที่สุดไว้ข้อ 1 ไล่ลงมา**\n"
-                        f"- เขียนกระชับ ตรงประเด็น คุ้มพื้นที่กระดาษ ใช้รูปแบบนี้เท่านั้น:\n"
+                        f"สวมบทบาท **เพื่อนร่วมเรียนหัวกะทิช่างสงสัย** ที่คอยถามอาจารย์ในจุดสำคัญที่คนอ่านมักมองข้ามหรือลืมเอะใจ\n"
+                        f"- สร้างจำนวน **{qa_min} ถึง {qa_max} ข้อ** (ปรับจำนวนตามความแน่นของเนื้อหาจริงในสไลด์ ห้ามฝืนสร้างคำถามขยะ)\n"
+                        f"- **เรียงลำดับจากคำถามที่สำคัญที่สุด/เปิดมุมมองที่สุด/ออกสอบบ่อยที่สุดไว้ข้อ 1 ไล่ลงมา**\n"
+                        f"- เขียนกระชับ คุ้มพื้นที่กระดาษ ใช้รูปแบบนี้เท่านั้น:\n"
                         f"Q1: (คำถามเชิงเหตุผลที่คมและชวนคิด)\n"
-                        f"A1: (คำตอบกระชับ 1-3 บรรทัด อธิบายเหตุผลเชื่อมโยงชัดเจน เน้น **คำสำคัญตัวหนา**)\n\n"
+                        f"A1: (คำตอบกระชับ 1–3 บรรทัด อธิบายเหตุผลเชื่อมโยงชัดเจน เน้น **คำสำคัญตัวหนา**)\n\n"
                         f"**เกณฑ์คัดกรองคำถามที่ดี (เลือกถามเฉพาะ 5 ประเภทนี้ เรียงตามน้ำหนักความสำคัญ):**\n"
                         f"1. **ถามหาเหตุผลเบื้องหลัง (Why-Mechanism):** ไม่ถามว่า 'คืออะไร' แต่ถามว่า 'ทำไมกลไกนี้ถึงเกิดผลลัพธ์แบบนี้?' หรือ 'ทำไมต้องใช้เกณฑ์/ตัวเลขนี้?' เพื่อเชื่อมเหตุไปหาผลโดยไม่ต้องท่องจำ\n"
                         f"2. **ถามจุดตัดและกับดัก (Why-This-Not-That):** 'ทำไมเคสนี้ต้องเลือก A แทน B ทั้งที่ดูคล้ายกัน?' หรือ 'ถ้าเผลอทำ X จะเกิดผลเสียอะไรตามมา?' เพื่อดักจุดสับสนในห้องสอบและหน้างาน\n"
                         f"3. **ถามข้อยกเว้น/จุดพลิกเกม (What-If / Boundary):** 'แล้วถ้าผู้ป่วยมีเงื่อนไขพิเศษแบบนี้ แนวทางในหน้านี้ยังใช้ได้ไหม หรือต้องเปลี่ยน?' เพื่ออุดช่องโหว่จากกรณีมาตรฐานบนสไลด์\n"
                         f"4. **ถามเชื่อมสู่การใช้งานจริง (So-What):** 'รู้ข้อมูล/ค่านี้แล้ว มันเปลี่ยนการตัดสินใจวินิจฉัยหรือรักษาอย่างไร?' เพื่อให้เห็นภาพการใช้งานจริง\n"
                         f"5. **ถามรอยต่อที่อาจารย์ละไว้ในฐานที่เข้าใจ (Hidden Assumption):** จุดที่ผู้สอนข้ามไปเพราะนึกว่านักศึกษารู้อยู่แล้ว แต่จริงๆ เป็นรอยต่อที่ทำให้เข้าใจเรื่องไม่ติด\n\n"
-                        f"**คำถามต้องห้าม (ตัดทิ้งเด็ดขาด ห้ามสร้างเด็ดขาด):**\n"
-                        f"- ห้ามถามนิยามหรือความจำผิวเผินแบบ Flashcard (เช่น 'มีกี่ชนิด?', 'ย่อมาจากอะไร?', 'ค่าปกติคือเท่าไร?')\n"
+                        f"**คำถามต้องห้าม (ตัดทิ้งเด็ดขาด):**\n"
+                        f"- ห้ามถามนิยาม/ความจำผิวเผินแบบ Flashcard ('มีกี่ชนิด?', 'ย่อมาจากอะไร?', 'ค่าปกติเท่าไร?')\n"
                         f"- ห้ามถามลึกเกินระดับ นสพ. ปี {med_year} จนไม่ช่วยทำข้อสอบหรือดูแลคนไข้\n"
-                        f"- ห้ามถามคำถามที่คำตอบไปซ้ำกับสิ่งที่สรุปไว้แล้วในส่วน [HIGH-YIELD]"
+                        f"- ห้ามถามคำถามที่คำตอบซ้ำกับสิ่งที่สรุปไว้แล้วใน [HIGH-YIELD]"
                     )
 
-                local_context = build_local_sliding_context(target, window=2)
+                grounded_context = build_grounded_context(target, window=st.session_state.context_window)
                 prompt = (
                     st.session_state.custom_prompt_text
-                    .replace("{global_context}", local_context)
+                    .replace("{global_context}", grounded_context)
                     .replace("{section_instructions}", "\n\n".join(sections))
                 )
 
